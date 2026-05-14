@@ -1,0 +1,263 @@
+// ============================================================
+// Prisma Schema for UNI-POM Database
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USERS
+// ============================================================
+model User {
+  id            Int      @id @default(autoincrement())
+  username      String   @unique
+  full_name     String
+  role          Role
+  password_hash String
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  poms           Pom[]
+  pomReviews     Pom[]               @relation("ReviewedBy")
+  products       Product[]
+  priceHistory   PriceHistory[]
+  surveyReports  SurveyReport[]
+
+  @@index([username])
+  @@map("users")
+}
+
+enum Role {
+  admin
+  sales
+  technical
+}
+
+// ============================================================
+// BRANDS
+// ============================================================
+model Brand {
+  id         Int       @id @default(autoincrement())
+  name       String    @unique
+  short_name String?
+  country    String?
+  website    String?
+  logo_path  String?
+  is_active  Boolean   @default(true)
+  created_at DateTime  @default(now())
+
+  products Product[]
+
+  @@index([name])
+  @@map("brands")
+}
+
+// ============================================================
+// CATEGORIES
+// ============================================================
+model Category {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  created_at  DateTime @default(now())
+
+  products Product[]
+
+  @@index([name])
+  @@map("categories")
+}
+
+// ============================================================
+// PRODUCTS
+// ============================================================
+model Product {
+  id           Int     @id @default(autoincrement())
+  brand_id     Int
+  category_id  Int
+  name         String
+  part_number  String? @unique
+  unit         String  @default("Cái")
+  price        Decimal @default(0)
+  vat_rate     Decimal @default(0.10)
+  status       ProductStatus @default(active)
+  description  String?
+  spec         String?
+  image_path   String?
+  created_by   Int?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  brand        Brand       @relation(fields: [brand_id], references: [id], onDelete: Restrict)
+  category     Category    @relation(fields: [category_id], references: [id], onDelete: Restrict)
+  creator      User?       @relation(fields: [created_by], references: [id], onDelete: SetNull)
+  pomItems     PomItem[]
+  priceHistory PriceHistory[]
+  surveyItems  SurveyItem[]
+
+  @@index([brand_id])
+  @@index([category_id])
+  @@index([status])
+  @@map("products")
+}
+
+enum ProductStatus {
+  active      @map("active")
+  discontinued @map("discontinued")
+  draft       @map("draft")
+}
+
+// ============================================================
+// PRICE HISTORY
+// ============================================================
+model PriceHistory {
+  id         Int      @id @default(autoincrement())
+  product_id Int
+  old_price  Decimal
+  new_price  Decimal
+  changed_by Int?
+  changed_at DateTime @default(now())
+  note       String?
+
+  product Product @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [changed_by], references: [id], onDelete: SetNull)
+
+  @@index([product_id])
+  @@map("price_history")
+}
+
+// ============================================================
+// SOLUTIONS
+// ============================================================
+model Solution {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  code        String  @unique
+  description String?
+  is_active   Boolean @default(true)
+  created_at  DateTime @default(now())
+
+  poms Pom[]
+
+  @@index([code])
+  @@map("solutions")
+}
+
+// ============================================================
+// POMS
+// ============================================================
+model Pom {
+  id            Int      @id @default(autoincrement())
+  pom_code      String   @unique
+  solution_id   Int?
+  created_by    Int
+  reviewed_by   Int?
+  project_name  String
+  customer_name String?
+  status        PomStatus @default(draft)
+  note          String?
+  return_reason String?
+  exported_at   DateTime?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  solution     Solution?  @relation(fields: [solution_id], references: [id], onDelete: SetNull)
+  creator      User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
+  reviewer     User?      @relation("ReviewedBy", fields: [reviewed_by], references: [id], onDelete: SetNull)
+  items        PomItem[]
+  survey       SurveyReport?
+
+  @@index([status])
+  @@index([created_by])
+  @@index([pom_code])
+  @@map("poms")
+}
+
+enum PomStatus {
+  draft      @map("draft")
+  submitted  @map("submitted")
+  reviewed   @map("reviewed")
+  exported   @map("exported")
+}
+
+// ============================================================
+// POM ITEMS
+// ============================================================
+model PomItem {
+  id         Int      @id @default(autoincrement())
+  pom_id     Int
+  product_id Int
+  quantity   Int      @db.SmallInt
+  unit_price Decimal
+  vat_rate   Decimal @default(0.10)
+  note       String?
+  sort_order Int      @default(0)
+
+  pom     Pom     @relation(fields: [pom_id], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [product_id], references: [id], onDelete: Restrict)
+
+  @@index([pom_id])
+  @@index([product_id])
+  @@map("pom_items")
+}
+
+// ============================================================
+// SURVEY REPORTS
+// ============================================================
+model SurveyReport {
+  id            Int      @id @default(autoincrement())
+  report_code   String   @unique
+  report_type   String
+  pom_id        Int      @unique
+  created_by    Int
+  project_name  String
+  customer_name String?
+  site_address  String?
+  survey_date   String?
+  surveyor_name String?
+  status        SurveyStatus @default(draft)
+  general_note  String?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  pom        Pom        @relation(fields: [pom_id], references: [id], onDelete: Restrict)
+  creator    User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
+  items      SurveyItem[]
+
+  @@index([pom_id])
+  @@index([status])
+  @@map("survey_reports")
+}
+
+enum SurveyStatus {
+  draft     @map("draft")
+  completed @map("completed")
+}
+
+// ============================================================
+// SURVEY ITEMS
+// ============================================================
+model SurveyItem {
+  id                  Int     @id @default(autoincrement())
+  report_id           Int
+  product_id          Int?
+  product_name        String
+  quantity_proposed   Int     @default(0)
+  quantity_actual     Int     @default(0)
+  unit                String  @default("Cái")
+  location            String?
+  condition_note      String?
+  sort_order          Int     @default(0)
+
+  report  SurveyReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  product Product?     @relation(fields: [product_id], references: [id], onDelete: SetNull)
+
+  @@index([report_id])
+  @@map("survey_items")
+}
