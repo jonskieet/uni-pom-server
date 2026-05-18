@@ -68,3 +68,21 @@ export function adminOrTechnical(req: Request, res: Response, next: NextFunction
 
   next()
 }
+
+/**
+ * Middleware kiểm tra role (admin, technical hoặc sales)
+ * Dùng cho các thao tác mà sales cũng được phép thực hiện (VD: tạo/sửa sản phẩm)
+ */
+export function adminTechnicalOrSales(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json(errorResponse('Unauthorized'))
+    return
+  }
+
+  if (req.user.role !== 'admin' && req.user.role !== 'technical' && req.user.role !== 'sales') {
+    res.status(403).json(errorResponse('Admin, Technical or Sales access required'))
+    return
+  }
+
+  next()
+}

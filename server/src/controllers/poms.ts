@@ -29,13 +29,16 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
   const skip = (page - 1) * limit
   const statusParam = req.query.status as string | undefined
   const createdBy = req.query.created_by ? parseInt(req.query.created_by as string) : undefined
+  const excludeSurveyed = req.query.exclude_surveyed === 'true'
   const status = (statusParam && Object.values(PomStatus).includes(statusParam as PomStatus))
     ? (statusParam as PomStatus)
     : undefined
 
   const where: Prisma.PomWhereInput = {
     ...(status && { status }),
-    ...(createdBy && { created_by: createdBy })
+    ...(createdBy && { created_by: createdBy }),
+    // Lọc POM chưa có survey report nào
+    ...(excludeSurveyed && { surveyReports: { none: {} } }),
   }
 
   const [poms, total] = await Promise.all([
@@ -45,7 +48,7 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
         solution: true,
         creator: true,
         reviewer: true,
-        items: { include: { product: true } }
+        items: { include: { product: { include: { brand: true, category: true } } } }
       },
       skip,
       take: limit,
@@ -77,7 +80,14 @@ export const getPomById = asyncHandler(async (req: Request, res: Response) => {
       solution: true,
       creator: true,
       reviewer: true,
-      items: { include: { product: true }, orderBy: { sort_order: 'asc' } }
+      items: {
+        include: {
+          product: {
+            include: { brand: true, category: true }
+          }
+        },
+        orderBy: { sort_order: 'asc' }
+      }
     }
   })
 
@@ -117,7 +127,7 @@ export const createPom = asyncHandler(async (req: Request, res: Response) => {
     include: {
       solution: true,
       creator: true,
-      items: { include: { product: true } }
+      items: { include: { product: { include: { brand: true, category: true } } } }
     }
   })
 
@@ -143,7 +153,7 @@ export const updatePom = asyncHandler(async (req: Request, res: Response) => {
     include: {
       solution: true,
       creator: true,
-      items: { include: { product: true } }
+      items: { include: { product: { include: { brand: true, category: true } } } }
     }
   })
 
@@ -171,7 +181,7 @@ export const addPomItem = asyncHandler(async (req: Request, res: Response) => {
       note,
       sort_order: 0
     },
-    include: { product: true }
+    include: { product: { include: { brand: true, category: true } } }
   })
 
   res.status(201).json(successResponse(pomItem))
@@ -192,7 +202,7 @@ export const updatePomItem = asyncHandler(async (req: Request, res: Response) =>
       ...(vat_rate !== undefined && { vat_rate }),
       ...(note !== undefined && { note })
     },
-    include: { product: true }
+    include: { product: { include: { brand: true, category: true } } }
   })
 
   res.json(successResponse(pomItem))
@@ -213,7 +223,7 @@ export const deletePomItem = asyncHandler(async (req: Request, res: Response) =>
  * PUT /poms/:id/status — Change POM status
  */
 export const changePomStatus = asyncHandler(async (req: Request, res: Response) => {
-  const { status } = req.body
+  const { status, reviewer } = req.body
 
   if (!status) {
     throw new AppError(400, 'status is required')
@@ -221,11 +231,15 @@ export const changePomStatus = asyncHandler(async (req: Request, res: Response) 
 
   const pom = await prisma.pom.update({
     where: { id: parseInt(req.params.id) },
-    data: { status },
+    data: {
+      status,
+      ...(reviewer ? { reviewed_by: reviewer } : {}),
+    },
     include: {
       solution: true,
       creator: true,
-      items: { include: { product: true } }
+      reviewer: true,
+      items: { include: { product: { include: { brand: true, category: true } } }, orderBy: { sort_order: 'asc' } }
     }
   })
 
@@ -241,4 +255,45 @@ export const deletePom = asyncHandler(async (req: Request, res: Response) => {
   })
 
   res.json(successResponse(null, 'POM deleted successfully'))
+})
+
+/**
+ * PUT /poms/:id/items — Bulk upsert items (replace all items của POM)
+ * Xóa toàn bộ items cũ, insert lại từ đầu
+ */
+export const upsertPomItems = asyncHandler(async (req: Request, res: Response) => {
+  const pomId = parseInt(req.params.id)
+  const { items } = req.body
+
+  if (!Array.isArray(items)) {
+    throw new AppError(400, 'items must be an array')
+  }
+
+  // Dùng transaction: xóa cũ rồi tạo mới
+  const result = await prisma.$transaction([
+    prisma.pomItem.deleteMany({ where: { pom_id: pomId } }),
+    prisma.pomItem.createMany({
+      data: items.map((item: any, idx: number) => ({
+        pom_id:      pomId,
+        product_id:  item.product_id ?? null,
+        quantity:    Number(item.quantity) || 1,
+        unit_price:  Number(item.unit_price) || 0,
+        vat_rate:    Number(item.vat_rate) ?? 0.1,
+        note:        item.note ?? null,
+        sort_order:  item.sort_order ?? idx,
+      })),
+    }),
+  ])
+
+  // Trả về POM đầy đủ sau khi update
+  const pom = await prisma.pom.findUnique({
+    where: { id: pomId },
+    include: {
+      solution: true,
+      creator: true,
+      items: { include: { product: { include: { brand: true, category: true } } }, orderBy: { sort_order: 'asc' } },
+    },
+  })
+
+  res.json(successResponse(pom, `Đã cập nhật ${result[1].count} items`))
 })
