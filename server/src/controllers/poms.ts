@@ -297,3 +297,31 @@ export const upsertPomItems = asyncHandler(async (req: Request, res: Response) =
 
   res.json(successResponse(pom, `Đã cập nhật ${result[1].count} items`))
 })
+
+/**
+ * PUT /poms/:id/return — Trả POM về cho Kỹ thuật (chuyển về draft, lưu lý do)
+ */
+export const returnPom = asyncHandler(async (req: Request, res: Response) => {
+  const { reason } = req.body
+  const pomId = parseInt(req.params.id)
+
+  if (!reason || !reason.trim()) {
+    throw new AppError(400, 'reason is required')
+  }
+
+  const pom = await prisma.pom.update({
+    where: { id: pomId },
+    data: {
+      status: 'draft',
+      note: reason.trim(),
+    },
+    include: {
+      solution: true,
+      creator: true,
+      reviewer: true,
+      items: { include: { product: { include: { brand: true, category: true } } }, orderBy: { sort_order: 'asc' } }
+    }
+  })
+
+  res.json(successResponse(pom, 'POM đã được trả về cho Kỹ thuật'))
+})

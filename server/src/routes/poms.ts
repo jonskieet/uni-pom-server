@@ -8,11 +8,13 @@ import {
   getPomById,
   createPom,
   updatePom,
+  upsertPomItems,
   addPomItem,
   updatePomItem,
   deletePomItem,
   changePomStatus,
-  deletePom
+  deletePom,
+  returnPom
 } from '../controllers/poms'
 import { authMiddleware } from '../middleware/auth'
 
@@ -25,9 +27,11 @@ router.get('/:id', getPomById)
 router.post('/', createPom)
 router.put('/:id', updatePom)
 router.put('/:id/status', changePomStatus)
+router.put('/:id/return', returnPom)    // ← Trả POM về Kỹ thuật
+router.put('/:id/items', upsertPomItems)   // ← BULK upsert items
 router.delete('/:id', deletePom)
 
-// POM Items
+// POM Items (single)
 router.post('/:id/items', addPomItem)
 router.put('/items/:itemId', updatePomItem)
 router.delete('/items/:itemId', deletePomItem)
