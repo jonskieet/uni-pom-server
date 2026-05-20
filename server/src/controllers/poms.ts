@@ -37,8 +37,8 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
   const where: Prisma.PomWhereInput = {
     ...(status && { status }),
     ...(createdBy && { created_by: createdBy }),
-    // Lọc POM chưa có survey report nào
-    ...(excludeSurveyed && { surveyReports: { none: {} } }),
+    // Lọc POM chưa có survey report nào (survey là quan hệ 1-1)
+    ...(excludeSurveyed && { survey: null }),
   }
 
   const [poms, total] = await Promise.all([
@@ -313,7 +313,7 @@ export const returnPom = asyncHandler(async (req: Request, res: Response) => {
     where: { id: pomId },
     data: {
       status: 'draft',
-      note: reason.trim(),
+      return_reason: reason.trim(),
     },
     include: {
       solution: true,
@@ -324,4 +324,33 @@ export const returnPom = asyncHandler(async (req: Request, res: Response) => {
   })
 
   res.json(successResponse(pom, 'POM đã được trả về cho Kỹ thuật'))
+})
+
+/**
+ * PUT /poms/:id/approve — Trưởng phòng KT duyệt POM (submitted → reviewed)
+ */
+export const approvePom = asyncHandler(async (req: Request, res: Response) => {
+  const pomId = parseInt(req.params.id)
+  const reviewerId = req.user!.id
+
+  const pom = await prisma.pom.findUnique({ where: { id: pomId } })
+  if (!pom) throw new AppError(404, 'POM không tồn tại')
+  if (pom.status !== 'submitted') throw new AppError(400, 'Chỉ có thể duyệt POM đang ở trạng thái chờ duyệt')
+
+  const updated = await prisma.pom.update({
+    where: { id: pomId },
+    data: {
+      status:      'reviewed',
+      reviewed_by: reviewerId,
+      return_reason: null,
+    },
+    include: {
+      solution: true,
+      creator:  true,
+      reviewer: true,
+      items: { include: { product: { include: { brand: true, category: true } } }, orderBy: { sort_order: 'asc' } }
+    }
+  })
+
+  res.json(successResponse(updated, 'POM đã được duyệt'))
 })
