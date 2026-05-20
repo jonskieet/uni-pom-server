@@ -48,7 +48,8 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
         solution: true,
         creator: true,
         reviewer: true,
-        items: { include: { product: { include: { brand: true, category: true } } } }
+        items: { include: { product: { include: { brand: true, category: true } } } },
+        survey: true
       },
       skip,
       take: limit,
@@ -87,6 +88,9 @@ export const getPomById = asyncHandler(async (req: Request, res: Response) => {
           }
         },
         orderBy: { sort_order: 'asc' }
+      },
+      survey: {
+        include: { items: { include: { product: true } }, creator: true }
       }
     }
   })
