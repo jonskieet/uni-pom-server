@@ -39,6 +39,7 @@ enum Role {
   admin
   sales
   technical
+  technical_lead
 }
 
 // ============================================================

@@ -14,9 +14,10 @@ import {
   deletePomItem,
   changePomStatus,
   deletePom,
-  returnPom
+  returnPom,
+  approvePom
 } from '../controllers/poms'
-import { authMiddleware } from '../middleware/auth'
+import { authMiddleware, adminOrTechLead } from '../middleware/auth'
 
 const router = Router()
 
@@ -28,6 +29,7 @@ router.post('/', createPom)
 router.put('/:id', updatePom)
 router.put('/:id/status', changePomStatus)
 router.put('/:id/return', returnPom)    // ← Trả POM về Kỹ thuật
+router.put('/:id/approve', adminOrTechLead, approvePom)  // ← Trưởng phòng KT duyệt
 router.put('/:id/items', upsertPomItems)   // ← BULK upsert items
 router.delete('/:id', deletePom)
 

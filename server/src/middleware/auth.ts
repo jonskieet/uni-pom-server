@@ -86,3 +86,39 @@ export function adminTechnicalOrSales(req: Request, res: Response, next: NextFun
 
   next()
 }
+
+/**
+ * Middleware kiểm tra role (admin hoặc technical_lead)
+ * Dùng cho duyệt POM, quản lý giải pháp
+ */
+export function adminOrTechLead(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json(errorResponse('Unauthorized'))
+    return
+  }
+
+  if (req.user.role !== 'admin' && req.user.role !== 'technical_lead') {
+    res.status(403).json(errorResponse('Admin or Technical Lead access required'))
+    return
+  }
+
+  next()
+}
+
+/**
+ * Middleware kiểm tra role (admin, technical hoặc technical_lead)
+ */
+export function technicalRoles(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json(errorResponse('Unauthorized'))
+    return
+  }
+
+  const allowed = ['admin', 'technical', 'technical_lead']
+  if (!allowed.includes(req.user.role)) {
+    res.status(403).json(errorResponse('Technical access required'))
+    return
+  }
+
+  next()
+}
