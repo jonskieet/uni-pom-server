@@ -31,8 +31,12 @@ export const getSurveys = asyncHandler(async (req: Request, res: Response) => {
   const status = (statusParam && Object.values(SurveyStatus).includes(statusParam as SurveyStatus))
     ? (statusParam as SurveyStatus)
     : undefined
+  const pomId = req.query.pom_id ? parseInt(req.query.pom_id as string) : undefined
 
-  const where = status ? { status } : {}
+  const where = {
+    ...(status && { status }),
+    ...(pomId   && { pom_id: pomId }),
+  }
 
   const [surveys, total] = await Promise.all([
     prisma.surveyReport.findMany({
@@ -200,4 +204,39 @@ export const deleteSurvey = asyncHandler(async (req: Request, res: Response) => 
   })
 
   res.json(successResponse(null, 'Survey deleted successfully'))
+})
+
+/**
+ * PUT /surveys/:id/items — Bulk upsert items (replace all)
+ */
+export const upsertSurveyItems = asyncHandler(async (req: Request, res: Response) => {
+  const reportId = parseInt(req.params.id)
+  const { items } = req.body
+
+  if (!Array.isArray(items)) {
+    throw new AppError(400, 'items must be an array')
+  }
+
+  await prisma.$transaction([
+    prisma.surveyItem.deleteMany({ where: { report_id: reportId } }),
+    prisma.surveyItem.createMany({
+      data: items.map((item: any, idx: number) => ({
+        report_id:         reportId,
+        product_id:        item.product_id ?? null,
+        product_name:      item.product_name ?? '',
+        quantity_proposed: Number(item.quantity_proposed) || 0,
+        quantity_actual:   Number(item.quantity_actual) || 0,
+        unit:              item.unit ?? 'Cái',
+        location:          item.location ?? null,
+        condition_note:    item.condition_note ?? null,
+      })),
+    }),
+  ])
+
+  const survey = await prisma.surveyReport.findUnique({
+    where: { id: reportId },
+    include: { pom: true, creator: true, items: { include: { product: true } } },
+  })
+
+  res.json(successResponse(survey, `Đã cập nhật items`))
 })
