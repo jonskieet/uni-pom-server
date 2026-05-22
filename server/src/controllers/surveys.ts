@@ -38,6 +38,16 @@ export const getSurveys = asyncHandler(async (req: Request, res: Response) => {
     ...(pomId   && { pom_id: pomId }),
   }
 
+  // Khi filter theo pom_id: trả về array thẳng (không cần pagination)
+  if (pomId) {
+    const surveys = await prisma.surveyReport.findMany({
+      where,
+      include: { pom: true, creator: true, items: true },
+      orderBy: { created_at: 'desc' }
+    })
+    return res.json(successResponse(surveys))
+  }
+
   const [surveys, total] = await Promise.all([
     prisma.surveyReport.findMany({
       where,
