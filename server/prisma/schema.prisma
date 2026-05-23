@@ -30,6 +30,8 @@ model User {
   products       Product[]
   priceHistory   PriceHistory[]
   surveyReports  SurveyReport[]
+  formTemplatesCreated  SurveyFormTemplate[] @relation("TemplateCreator")
+  formTemplatesUpdated  SurveyFormTemplate[] @relation("TemplateUpdater")
 
   @@index([username])
   @@map("users")
@@ -262,4 +264,29 @@ model SurveyItem {
 
   @@index([report_id])
   @@map("survey_items")
+}
+
+// ============================================================
+// SURVEY FORM TEMPLATES (Custom Form Builder)
+// Technical Lead có thể tạo/sửa/xóa template form cho từng loại khảo sát
+// ============================================================
+model SurveyFormTemplate {
+  id           Int      @id @default(autoincrement())
+  survey_type  String   @unique   // "LAN", "LED", "CCTV", "MEETING", ...
+  name         String             // "Mạng LAN", "Màn hình LED", ...
+  description  String?
+  icon         String?  @default("ti-clipboard")
+  sections     Json               // FormSection[] — cấu trúc form
+  is_active    Boolean  @default(true)
+  created_by   Int
+  updated_by   Int?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  creator      User     @relation("TemplateCreator", fields: [created_by], references: [id], onDelete: Restrict)
+  updater      User?    @relation("TemplateUpdater", fields: [updated_by], references: [id], onDelete: SetNull)
+
+  @@index([survey_type])
+  @@index([is_active])
+  @@map("survey_form_templates")
 }

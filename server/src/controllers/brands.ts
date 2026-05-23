@@ -44,7 +44,7 @@ export const getBrandById = asyncHandler(async (req: Request, res: Response) => 
  * POST /brands — Create brand (admin only)
  */
 export const createBrand = asyncHandler(async (req: Request, res: Response) => {
-  const { name, short_name, country, website } = req.body
+  const { name, short_name, country, website, is_active } = req.body
 
   if (!name) {
     throw new AppError(400, 'name is required')
@@ -55,7 +55,8 @@ export const createBrand = asyncHandler(async (req: Request, res: Response) => {
       name,
       short_name,
       country,
-      website
+      website,
+      is_active: is_active !== undefined ? is_active : true
     }
   })
 

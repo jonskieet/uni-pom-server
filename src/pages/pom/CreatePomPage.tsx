@@ -278,7 +278,7 @@ export default function CreatePomPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <Button variant="secondary" icon="ti-arrow-left" onClick={() => setStep(1)}>Quay lại</Button>
             <Button variant="primary" icon="ti-send" loading={saving} onClick={handleSave}>
-              Lưu & Submit cho Kinh doanh
+              Lưu & Submit cho Trưởng Phòng Kỹ Thuật
             </Button>
           </div>
         </div>

@@ -101,7 +101,19 @@ ipcMain.handle('products:getPriceHistory', async (_e, id: number) => {
 // ── POMS ─────────────────────────────────────────────────────
 
 ipcMain.handle('poms:getAll', async (_e, filters: any) => {
-  try { return await api.get('/poms', filters) }
+  try {
+    const res = await api.get<any>('/poms', filters)
+    const list = Array.isArray(res) ? res : (res?.data ?? [])
+    const mapped = list.map((pom: any) => ({
+      ...pom,
+      item_count:   pom.item_count   ?? (Array.isArray(pom.items) ? pom.items.length : 0),
+      total_amount: pom.total_amount ?? (Array.isArray(pom.items)
+        ? pom.items.reduce((s: number, i: any) =>
+            s + Number(i.unit_price) * Number(i.quantity) * (1 + Number(i.vat_rate)), 0)
+        : 0),
+    }))
+    return Array.isArray(res) ? mapped : { ...res, data: mapped }
+  }
   catch { return [] }
 })
 
@@ -139,6 +151,10 @@ ipcMain.handle('poms:create', async (_e, data: any) => {
 ipcMain.handle('poms:update', async (_e, id: number, data: any) => {
   try { return await api.put(`/poms/${id}`, data) }
   catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('poms:approve', async (_e, id: number) => {
+  return await api.put(`/poms/${id}/approve`, {})
 })
 
 ipcMain.handle('poms:updateStatus', async (_e, id: number, status: string, reviewer?: number) => {
@@ -292,12 +308,32 @@ ipcMain.handle('poms:exportExcel', async (_e, id: number, isPreview: boolean) =>
 // ── SURVEY ───────────────────────────────────────────────────
 
 ipcMain.handle('survey:getAll', async (_e, filters: any) => {
-  try { return await api.get('/surveys', filters) }
+  try {
+    const res = await api.get<any>('/surveys', filters)
+    const list = Array.isArray(res) ? res : (res?.data ?? [])
+    return list.map((r: any) => ({
+      ...r,
+      pom_code:     r.pom_code     ?? r.pom?.pom_code     ?? '',
+      pom_project:  r.pom_project  ?? r.pom?.project_name ?? '',
+      created_by_name: r.created_by_name ?? r.creator?.full_name ?? '',
+      item_count:   r.item_count   ?? (Array.isArray(r.items) ? r.items.length : 0),
+    }))
+  }
   catch { return [] }
 })
 
 ipcMain.handle('survey:getById', async (_e, id: number) => {
-  try { return await api.get(`/surveys/${id}`) }
+  try {
+    const r = await api.get<any>(`/surveys/${id}`)
+    if (!r) return null
+    return {
+      ...r,
+      pom_code:     r.pom_code     ?? r.pom?.pom_code     ?? '',
+      pom_project:  r.pom_project  ?? r.pom?.project_name ?? '',
+      created_by_name: r.created_by_name ?? r.creator?.full_name ?? '',
+      item_count:   r.item_count   ?? (Array.isArray(r.items) ? r.items.length : 0),
+    }
+  }
   catch { return null }
 })
 
@@ -318,5 +354,37 @@ ipcMain.handle('survey:updateItems', async (_e, id: number, items: any[]) => {
 
 ipcMain.handle('survey:delete', async (_e, id: number) => {
   try { return await api.delete(`/surveys/${id}`) }
+  catch (err: any) { return { error: err.message } }
+})
+
+// ── FORM TEMPLATES ────────────────────────────────────────────
+
+ipcMain.handle('formTemplates:getAll', async () => {
+  try { return await api.get('/form-templates?all=true') }
+  catch { return [] }
+})
+
+ipcMain.handle('formTemplates:getByType', async (_e, type: string) => {
+  try { return await api.get(`/form-templates/${type}`) }
+  catch { return null }
+})
+
+ipcMain.handle('formTemplates:create', async (_e, data: any) => {
+  try { return await api.post('/form-templates', data) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('formTemplates:update', async (_e, id: number, data: any) => {
+  try { return await api.put(`/form-templates/${id}`, data) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('formTemplates:delete', async (_e, id: number) => {
+  try { return await api.delete(`/form-templates/${id}`) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('formTemplates:seed', async () => {
+  try { return await api.post('/form-templates/seed/defaults', {}) }
   catch (err: any) { return { error: err.message } }
 })
