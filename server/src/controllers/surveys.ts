@@ -88,7 +88,7 @@ export const getSurveyById = asyncHandler(async (req: Request, res: Response) =>
  * POST /surveys — Create survey report
  */
 export const createSurvey = asyncHandler(async (req: Request, res: Response) => {
-  const { pom_id, report_type, project_name, customer_name, site_address, surveyor_name } = req.body
+  const { pom_id, report_type, project_name, customer_name, site_address, surveyor_name, survey_date, general_note } = req.body
   const userId = req.user?.id
 
   if (!userId) {
@@ -109,7 +109,9 @@ export const createSurvey = asyncHandler(async (req: Request, res: Response) => 
       project_name,
       customer_name,
       site_address,
+      survey_date:  survey_date  ?? null,
       surveyor_name,
+      general_note: general_note ?? null,
       created_by: userId,
       status: 'draft'
     },
