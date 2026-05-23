@@ -237,10 +237,11 @@ export const upsertSurveyItems = asyncHandler(async (req: Request, res: Response
         product_id:        item.product_id ?? null,
         product_name:      item.product_name ?? '',
         quantity_proposed: Number(item.quantity_proposed) || 0,
-        quantity_actual:   Number(item.quantity_actual) || 0,
+        quantity_actual:   Number(item.quantity_actual)   || 0,
         unit:              item.unit ?? 'Cái',
-        location:          item.location ?? null,
+        location:          item.location      ?? null,
         condition_note:    item.condition_note ?? null,
+        sort_order:        Number(item.sort_order) || idx,
       })),
     }),
   ])
