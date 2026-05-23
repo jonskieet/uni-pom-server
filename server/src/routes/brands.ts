@@ -1,5 +1,7 @@
 // ============================================================
 // src/routes/brands.ts — Brands routes
+// FIX: sales được phép tạo & sửa hãng (adminTechnicalOrSales)
+//      chỉ admin mới được xóa hãng (tránh xóa nhầm ảnh hưởng sản phẩm)
 // ============================================================
 
 import { Router } from 'express'
@@ -10,15 +12,15 @@ import {
   updateBrand,
   deleteBrand
 } from '../controllers/brands'
-import { authMiddleware, adminOnly } from '../middleware/auth'
+import { authMiddleware, adminOnly, adminTechnicalOrSales } from '../middleware/auth'
 
 const router = Router()
 
 router.use(authMiddleware)
-router.get('/', getBrands)
+router.get('/',    getBrands)
 router.get('/:id', getBrandById)
-router.post('/', adminOnly, createBrand)
-router.put('/:id', adminOnly, updateBrand)
-router.delete('/:id', adminOnly, deleteBrand)
+router.post('/',    adminTechnicalOrSales, createBrand)  // ← đổi từ adminOnly
+router.put('/:id',  adminTechnicalOrSales, updateBrand)  // ← đổi từ adminOnly
+router.delete('/:id', adminOnly, deleteBrand)            // ← giữ adminOnly (an toàn hơn)
 
 export default router
