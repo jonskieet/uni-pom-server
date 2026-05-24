@@ -30,11 +30,10 @@ model User {
   products       Product[]
   priceHistory   PriceHistory[]
   surveyReports  SurveyReport[]
-  formTemplatesCreated  SurveyFormTemplate[] @relation("TemplateCreator")
-  formTemplatesUpdated  SurveyFormTemplate[] @relation("TemplateUpdater")
 
   @@index([username])
   @@map("users")
+  formTemplates FormTemplate[]   // ← THÊM
 }
 
 enum Role {
@@ -147,12 +146,12 @@ model Solution {
   is_active   Boolean @default(true)
   created_at  DateTime @default(now())
 
-  poms Pom[]
+  poms          Pom[]
+  formTemplates FormTemplate[]   // ← THÊM DÒNG NÀY
 
   @@index([code])
   @@map("solutions")
 }
-
 // ============================================================
 // POMS
 // ============================================================
@@ -266,27 +265,21 @@ model SurveyItem {
   @@map("survey_items")
 }
 
-// ============================================================
-// SURVEY FORM TEMPLATES (Custom Form Builder)
-// Technical Lead có thể tạo/sửa/xóa template form cho từng loại khảo sát
-// ============================================================
-model SurveyFormTemplate {
-  id           Int      @id @default(autoincrement())
-  survey_type  String   @unique   // "LAN", "LED", "CCTV", "MEETING", ...
-  name         String             // "Mạng LAN", "Màn hình LED", ...
-  description  String?
-  icon         String?  @default("ti-clipboard")
-  sections     Json               // FormSection[] — cấu trúc form
-  is_active    Boolean  @default(true)
-  created_by   Int
-  updated_by   Int?
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+model FormTemplate {
+  id          Int      @id @default(autoincrement())
+  solution_id Int
+  name        String
+  description String?
+  schema      Json     @default("[]")
+  version     Int      @default(1)
+  is_active   Boolean  @default(true)
+  created_by  Int?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
 
-  creator      User     @relation("TemplateCreator", fields: [created_by], references: [id], onDelete: Restrict)
-  updater      User?    @relation("TemplateUpdater", fields: [updated_by], references: [id], onDelete: SetNull)
+  solution Solution @relation(fields: [solution_id], references: [id], onDelete: Cascade)
+  creator  User?    @relation(fields: [created_by], references: [id], onDelete: SetNull)
 
-  @@index([survey_type])
-  @@index([is_active])
-  @@map("survey_form_templates")
+  @@index([solution_id])
+  @@map("form_templates")
 }

@@ -10,10 +10,10 @@ import usersRoutes from './routes/users'
 import productsRoutes from './routes/products'
 import pomsRoutes from './routes/poms'
 import surveysRoutes from './routes/surveys'
-import formTemplatesRoutes from './routes/formTemplates'
 import brandsRoutes from './routes/brands'
 import categoriesRoutes from './routes/categories'
 import solutionsRoutes from './routes/solutions'
+import formTemplatesRoutes from './routes/formTemplates'
 import { errorHandler, notFoundHandler } from './middleware/errorHandler'
 
 export function createApp(): Express {
@@ -50,10 +50,10 @@ export function createApp(): Express {
   app.use('/api/products', productsRoutes)
   app.use('/api/poms', pomsRoutes)
   app.use('/api/surveys', surveysRoutes)
-  app.use('/api/form-templates', formTemplatesRoutes)
   app.use('/api/brands', brandsRoutes)
   app.use('/api/categories', categoriesRoutes)
   app.use('/api/solutions', solutionsRoutes)
+  app.use('/api/form-templates', formTemplatesRoutes)
 
   // ============================================================
   // ERROR HANDLING
