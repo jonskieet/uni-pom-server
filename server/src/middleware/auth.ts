@@ -88,6 +88,24 @@ export function adminTechnicalOrSales(req: Request, res: Response, next: NextFun
 }
 
 /**
+ * Middleware kiểm tra role (admin hoặc sales)
+ * Dùng cho quản lý danh mục, sản phẩm
+ */
+export function adminOrSales(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json(errorResponse('Unauthorized'))
+    return
+  }
+
+  if (req.user.role !== 'admin' && req.user.role !== 'sales') {
+    res.status(403).json(errorResponse('Admin or Sales access required'))
+    return
+  }
+
+  next()
+}
+
+/**
  * Middleware kiểm tra role (admin hoặc technical_lead)
  * Dùng cho duyệt POM, quản lý giải pháp
  */

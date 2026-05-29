@@ -80,7 +80,7 @@ export const getCategoryById = asyncHandler(async (req: Request, res: Response) 
 })
 
 /**
- * POST /categories — Tạo danh mục (admin)
+ * POST /categories — Tạo danh mục (admin hoặc sales)
  */
 export const createCategory = asyncHandler(async (req: Request, res: Response) => {
   const { name, description, parent_id } = req.body
@@ -107,7 +107,7 @@ export const createCategory = asyncHandler(async (req: Request, res: Response) =
 })
 
 /**
- * PUT /categories/:id — Sửa danh mục (admin)
+ * PUT /categories/:id — Sửa danh mục (admin hoặc sales)
  */
 export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
   const { name, description, parent_id } = req.body
@@ -137,7 +137,7 @@ export const updateCategory = asyncHandler(async (req: Request, res: Response) =
 })
 
 /**
- * DELETE /categories/:id — Xóa danh mục (admin)
+ * DELETE /categories/:id — Xóa danh mục (admin hoặc sales)
  */
 export const deleteCategory = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)

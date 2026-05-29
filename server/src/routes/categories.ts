@@ -10,15 +10,15 @@ import {
   updateCategory,
   deleteCategory
 } from '../controllers/categories'
-import { authMiddleware, adminOnly } from '../middleware/auth'
+import { authMiddleware, adminOrSales } from '../middleware/auth'
 
 const router = Router()
 
 router.use(authMiddleware)
 router.get('/', getCategories)
 router.get('/:id', getCategoryById)
-router.post('/', adminOnly, createCategory)
-router.put('/:id', adminOnly, updateCategory)
-router.delete('/:id', adminOnly, deleteCategory)
+router.post('/', adminOrSales, createCategory)
+router.put('/:id', adminOrSales, updateCategory)
+router.delete('/:id', adminOrSales, deleteCategory)
 
 export default router
