@@ -53,6 +53,24 @@ export function adminOnly(req: Request, res: Response, next: NextFunction): void
 }
 
 /**
+ * Middleware kiểm tra role (admin hoặc sales)
+ * Dùng cho quản lý danh mục: sales được thêm/sửa, chỉ admin được xóa
+ */
+export function adminOrSales(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json(errorResponse('Unauthorized'))
+    return
+  }
+
+  if (req.user.role !== 'admin' && req.user.role !== 'sales') {
+    res.status(403).json(errorResponse('Admin or Sales access required'))
+    return
+  }
+
+  next()
+}
+
+/**
  * Middleware kiểm tra role (admin hoặc technical)
  */
 export function adminOrTechnical(req: Request, res: Response, next: NextFunction): void {
