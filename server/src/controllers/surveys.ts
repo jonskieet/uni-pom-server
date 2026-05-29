@@ -88,34 +88,35 @@ export const getSurveyById = asyncHandler(async (req: Request, res: Response) =>
  * POST /surveys — Create survey report
  */
 export const createSurvey = asyncHandler(async (req: Request, res: Response) => {
-  const { pom_id, report_type, project_name, customer_name, site_address, surveyor_name, survey_date, general_note } = req.body
+  const {
+    pom_id, report_type, project_name, customer_name,
+    site_address, surveyor_name, survey_date, general_note,
+    form_template_id, form_data,
+  } = req.body
   const userId = req.user?.id
 
-  if (!userId) {
-    throw new AppError(401, 'Unauthorized')
-  }
-
-  if (!pom_id || !project_name) {
-    throw new AppError(400, 'pom_id and project_name are required')
-  }
+  if (!userId) throw new AppError(401, 'Unauthorized')
+  if (!pom_id || !project_name) throw new AppError(400, 'pom_id and project_name are required')
 
   const report_code = generateReportCode()
 
   const survey = await prisma.surveyReport.create({
     data: {
       report_code,
-      report_type: report_type || 'LAN',
+      report_type:      report_type || 'site_survey',
       pom_id,
       project_name,
-      customer_name,
-      site_address,
-      survey_date:  survey_date  ?? null,
-      surveyor_name,
-      general_note: general_note ?? null,
+      customer_name:    customer_name    ?? null,
+      site_address:     site_address     ?? null,
+      survey_date:      survey_date      ?? null,
+      surveyor_name:    surveyor_name    ?? null,
+      general_note:     general_note     ?? null,
+      form_template_id: form_template_id ? parseInt(form_template_id) : null,
+      form_data:        form_data        ?? null,
       created_by: userId,
-      status: 'draft'
+      status: 'draft',
     },
-    include: { pom: true, creator: true, items: true }
+    include: { pom: true, creator: true, items: true },
   })
 
   res.status(201).json(successResponse(survey))
