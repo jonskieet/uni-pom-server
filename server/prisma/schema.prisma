@@ -230,10 +230,12 @@ model SurveyReport {
   site_address  String?
   survey_date   String?
   surveyor_name String?
-  status        SurveyStatus @default(draft)
-  general_note  String?
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  status           SurveyStatus @default(draft)
+  general_note     String?
+  form_template_id Int?
+  form_data        Json?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
 
   pom        Pom        @relation(fields: [pom_id], references: [id], onDelete: Restrict)
   creator    User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
