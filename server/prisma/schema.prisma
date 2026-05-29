@@ -69,11 +69,15 @@ model Category {
   id          Int      @id @default(autoincrement())
   name        String   @unique
   description String?
+  parent_id   Int?
   created_at  DateTime @default(now())
 
+  parent   Category?  @relation("CategoryTree", fields: [parent_id], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
   products Product[]
 
   @@index([name])
+  @@index([parent_id])
   @@map("categories")
 }
 
@@ -92,6 +96,8 @@ model Product {
   status       ProductStatus @default(active)
   description  String?
   spec         String?
+  origin       String?
+  warranty     String?
   image_path   String?
   created_by   Int?
   created_at   DateTime @default(now())
@@ -214,27 +220,24 @@ model PomItem {
 // SURVEY REPORTS
 // ============================================================
 model SurveyReport {
-  id               Int      @id @default(autoincrement())
-  report_code      String   @unique
-  report_type      String
-  pom_id           Int      @unique
-  created_by       Int
-  project_name     String
-  customer_name    String?
-  site_address     String?
-  survey_date      String?
-  surveyor_name    String?
-  status           SurveyStatus @default(draft)
-  general_note     String?
-  created_at       DateTime @default(now())
-  updated_at       DateTime @updatedAt
-  form_template_id Int?
-  form_data        Json?
+  id            Int      @id @default(autoincrement())
+  report_code   String   @unique
+  report_type   String
+  pom_id        Int      @unique
+  created_by    Int
+  project_name  String
+  customer_name String?
+  site_address  String?
+  survey_date   String?
+  surveyor_name String?
+  status        SurveyStatus @default(draft)
+  general_note  String?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-  pom          Pom           @relation(fields: [pom_id], references: [id], onDelete: Restrict)
-  creator      User          @relation(fields: [created_by], references: [id], onDelete: Restrict)
-  items        SurveyItem[]
-  formTemplate FormTemplate? @relation(fields: [form_template_id], references: [id], onDelete: SetNull)
+  pom        Pom        @relation(fields: [pom_id], references: [id], onDelete: Restrict)
+  creator    User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
+  items      SurveyItem[]
 
   @@index([pom_id])
   @@index([status])
@@ -280,9 +283,8 @@ model FormTemplate {
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
-  solution       Solution       @relation(fields: [solution_id], references: [id], onDelete: Cascade)
-  creator        User?          @relation(fields: [created_by], references: [id], onDelete: SetNull)
-  surveyReports  SurveyReport[]
+  solution Solution @relation(fields: [solution_id], references: [id], onDelete: Cascade)
+  creator  User?    @relation(fields: [created_by], references: [id], onDelete: SetNull)
 
   @@index([solution_id])
   @@map("form_templates")
