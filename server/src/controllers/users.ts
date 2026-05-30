@@ -119,3 +119,22 @@ export const deleteUser = asyncHandler(async (req: Request, res: Response) => {
 
   res.json(successResponse(null, 'User deleted successfully'))
 })
+
+/**
+ * PUT /users/:id/reset-password — Đặt lại mật khẩu (admin only)
+ */
+export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
+  const { password } = req.body
+  if (!password || password.length < 6) {
+    throw new AppError(400, 'Mật khẩu phải có ít nhất 6 ký tự')
+  }
+
+  const passwordHash = await hashPassword(password)
+
+  await prisma.user.update({
+    where: { id: parseInt(req.params.id) },
+    data:  { password_hash: passwordHash }
+  })
+
+  res.json(successResponse(null, 'Đặt lại mật khẩu thành công'))
+})
