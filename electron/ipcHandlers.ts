@@ -5,7 +5,7 @@
 import { ipcMain, app, dialog } from 'electron'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { api, setToken, apiUpload } from './api'
+import { api, setToken, getToken, apiUpload } from './api'
 
 const require = createRequire(import.meta.url)
 
@@ -471,6 +471,69 @@ ipcMain.handle('upload:image', async (_e, folder: string, oldUrl?: string) => {
 
     const url = await apiUpload(folder, filePaths[0], oldUrl)
     return { url }
+  } catch (err: any) {
+    return { error: err.message }
+  }
+})
+
+// Upload ảnh từ base64 (dùng cho FormRenderer trong renderer process)
+// Renderer đọc file → base64 → IPC → upload lên server → trả URL
+ipcMain.handle('upload:imageBase64', async (_e, folder: string, base64: string, mimeType: string, oldUrl?: string) => {
+  try {
+    const boundary = `----FormBoundary${Date.now()}`
+    const crlf = '\r\n'
+    const ext  = mimeType === 'image/png' ? 'png'
+               : mimeType === 'image/webp' ? 'webp'
+               : 'jpg'
+    const fileName = `form-${Date.now()}.${ext}`
+    const fileBuffer = Buffer.from(base64, 'base64')
+
+    const parts: Buffer[] = []
+
+    if (oldUrl) {
+      parts.push(Buffer.from(
+        `--${boundary}${crlf}` +
+        `Content-Disposition: form-data; name="old_url"${crlf}${crlf}` +
+        `${oldUrl}${crlf}`
+      ))
+    }
+
+    parts.push(Buffer.from(
+      `--${boundary}${crlf}` +
+      `Content-Disposition: form-data; name="image"; filename="${fileName}"${crlf}` +
+      `Content-Type: ${mimeType}${crlf}${crlf}`
+    ))
+    parts.push(fileBuffer)
+    parts.push(Buffer.from(`${crlf}--${boundary}--${crlf}`))
+
+    const body = Buffer.concat(parts)
+
+    const { net } = await import('electron')
+    const token   = getToken() ?? ''
+    const baseUrl = (process.env.VITE_API_URL ?? 'http://localhost:3000/api')
+
+    const response = await new Promise<any>((resolve, reject) => {
+      const req = net.request({
+        method: 'POST',
+        url:    `${baseUrl}/upload/${folder}`,
+      })
+      req.setHeader('Authorization', `Bearer ${token}`)
+      req.setHeader('Content-Type',  `multipart/form-data; boundary=${boundary}`)
+      req.on('response', (res) => {
+        let data = ''
+        res.on('data', (chunk) => { data += chunk })
+        res.on('end',  () => {
+          try { resolve(JSON.parse(data)) }
+          catch { reject(new Error('Invalid server response')) }
+        })
+      })
+      req.on('error', reject)
+      req.write(body)
+      req.end()
+    })
+
+    if (!response?.data?.url) throw new Error(response?.error ?? 'Upload failed')
+    return { url: response.data.url }
   } catch (err: any) {
     return { error: err.message }
   }

@@ -14,7 +14,13 @@ const api = {
     update:  (id, data) => ipcRenderer.invoke('brands:update', id, data),
     delete:  (id)       => ipcRenderer.invoke('brands:delete', id),
   },
-  categories: { getAll: () => ipcRenderer.invoke('categories:getAll') },
+  categories: {
+    getAll:  (params?: any)              => ipcRenderer.invoke('categories:getAll', params),
+    getById: (id: number)               => ipcRenderer.invoke('categories:getById', id),
+    create:  (data: any)                => ipcRenderer.invoke('categories:create', data),
+    update:  (id: number, data: any)    => ipcRenderer.invoke('categories:update', id, data),
+    delete:  (id: number)               => ipcRenderer.invoke('categories:delete', id),
+  },
   products: {
     getAll:          (filters?)  => ipcRenderer.invoke('products:getAll', filters),
     getById:         (id)        => ipcRenderer.invoke('products:getById', id),
@@ -23,7 +29,13 @@ const api = {
     delete:          (id)        => ipcRenderer.invoke('products:delete', id),
     getPriceHistory: (id)        => ipcRenderer.invoke('products:getPriceHistory', id),
   },
-  solutions: { getAll: () => ipcRenderer.invoke('solutions:getAll') },
+  solutions: {
+    getAll:  ()                          => ipcRenderer.invoke('solutions:getAll'),
+    getById: (id: number)               => ipcRenderer.invoke('solutions:getById', id),
+    create:  (data: any)                => ipcRenderer.invoke('solutions:create', data),
+    update:  (id: number, data: any)    => ipcRenderer.invoke('solutions:update', id, data),
+    delete:  (id: number)               => ipcRenderer.invoke('solutions:delete', id),
+  },
   poms: {
     getAll:       (filters?)              => ipcRenderer.invoke('poms:getAll', filters),
     getById:      (id)                    => ipcRenderer.invoke('poms:getById', id),
@@ -39,8 +51,13 @@ const api = {
     upsert: (pom_id, items) => ipcRenderer.invoke('pomItems:upsert', pom_id, items),
   },
   users: {
-    getAll: ()                        => ipcRenderer.invoke('users:getAll'),
-    login:  (username, password_hash) => ipcRenderer.invoke('users:login', username, password_hash),
+    getAll:        ()                        => ipcRenderer.invoke('users:getAll'),
+    login:         (username, password_hash) => ipcRenderer.invoke('users:login', username, password_hash),
+    create:        (data: any)               => ipcRenderer.invoke('users:create', data),
+    update:        (id: number, data: any)   => ipcRenderer.invoke('users:update', id, data),
+    updateAvatar:  (id: number, url: string) => ipcRenderer.invoke('users:updateAvatar', id, url),
+    resetPassword: (id: number, pw: string)  => ipcRenderer.invoke('users:resetPassword', id, pw),
+    delete:        (id: number)              => ipcRenderer.invoke('users:delete', id),
   },
   survey: {
     getAll:      (filters?: any)            => ipcRenderer.invoke('survey:getAll', filters),
@@ -50,13 +67,17 @@ const api = {
     updateItems: (id: number, items: any[]) => ipcRenderer.invoke('survey:updateItems', id, items),
     delete:      (id: number)               => ipcRenderer.invoke('survey:delete', id),
   },
-  // ── Form Templates ──────────────────────────────────────────
   formTemplates: {
-    getAll:   (solution_id?: number) => ipcRenderer.invoke('formTemplates:getAll', solution_id),
-    getById:  (id: number)           => ipcRenderer.invoke('formTemplates:getById', id),
-    create:   (data: any)            => ipcRenderer.invoke('formTemplates:create', data),
-    update:   (id: number, data: any)=> ipcRenderer.invoke('formTemplates:update', id, data),
-    delete:   (id: number)           => ipcRenderer.invoke('formTemplates:delete', id),
+    getAll:  (solution_id?: number)      => ipcRenderer.invoke('formTemplates:getAll', solution_id),
+    getById: (id: number)               => ipcRenderer.invoke('formTemplates:getById', id),
+    create:  (data: any)                => ipcRenderer.invoke('formTemplates:create', data),
+    update:  (id: number, data: any)    => ipcRenderer.invoke('formTemplates:update', id, data),
+    delete:  (id: number)               => ipcRenderer.invoke('formTemplates:delete', id),
+  },
+  upload: {
+    image:       (folder: string, oldUrl?: string) => ipcRenderer.invoke('upload:image', folder, oldUrl),
+    imageBase64: (folder: string, base64: string, mimeType: string, oldUrl?: string) =>
+      ipcRenderer.invoke('upload:imageBase64', folder, base64, mimeType, oldUrl),
   },
 }
 
