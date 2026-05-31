@@ -5,7 +5,7 @@
 import { ipcMain, app, dialog } from 'electron'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { api, setToken } from './api'
+import { api, setToken, apiUpload } from './api'
 
 const require = createRequire(import.meta.url)
 
@@ -19,16 +19,47 @@ ipcMain.handle('users:login', async (_e, username: string, password_hash: string
       password: password_hash
     })
     setToken(res.token)
-    return res.user
+    // Fetch /auth/me ngay sau login để đảm bảo avatar_url luôn có
+    // (phòng trường hợp login response thiếu field mới trong tương lai)
+    try {
+      const me = await api.get<any>('/auth/me')
+      return { ...res.user, ...me }
+    } catch {
+      return res.user   // fallback về login response nếu /me lỗi
+    }
   } catch (err: any) {
     return { error: err.message }
   }
 })
 
 ipcMain.handle('users:getAll', async () => {
-  try {
-    return await api.get('/users')
-  } catch { return [] }
+  try { return await api.get('/users') }
+  catch { return [] }
+})
+
+ipcMain.handle('users:create', async (_e, data: any) => {
+  try { return await api.post('/users', data) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('users:update', async (_e, id: number, data: any) => {
+  try { return await api.put(`/users/${id}`, data) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('users:updateAvatar', async (_e, id: number, avatar_url: string) => {
+  try { return await api.put(`/users/${id}/avatar`, { avatar_url }) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('users:resetPassword', async (_e, id: number, password: string) => {
+  try { return await api.put(`/users/${id}/reset-password`, { password }) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('users:delete', async (_e, id: number) => {
+  try { return await api.delete(`/users/${id}`) }
+  catch (err: any) { return { error: err.message } }
 })
 
 // ── BRANDS ────────────────────────────────────────────────────
@@ -55,9 +86,33 @@ ipcMain.handle('brands:delete', async (_e, id: number) => {
 
 // ── CATEGORIES ───────────────────────────────────────────────
 
-ipcMain.handle('categories:getAll', async () => {
-  try { return await api.get('/categories') }
-  catch { return [] }
+ipcMain.handle('categories:getAll', async (_e, params: any) => {
+  try {
+    const qs = params ? '?' + new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([,v]) => v !== undefined).map(([k,v]) => [k, String(v)]))
+    ).toString() : ''
+    return await api.get(`/categories${qs}`)
+  } catch { return [] }
+})
+
+ipcMain.handle('categories:getById', async (_e, id: number) => {
+  try { return await api.get(`/categories/${id}`) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('categories:create', async (_e, data: any) => {
+  try { return await api.post('/categories', data) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('categories:update', async (_e, id: number, data: any) => {
+  try { return await api.put(`/categories/${id}`, data) }
+  catch (err: any) { return { error: err.message } }
+})
+
+ipcMain.handle('categories:delete', async (_e, id: number) => {
+  try { return await api.delete(`/categories/${id}`) }
+  catch (err: any) { return { error: err.message } }
 })
 
 // ── SOLUTIONS ────────────────────────────────────────────────
@@ -65,6 +120,22 @@ ipcMain.handle('categories:getAll', async () => {
 ipcMain.handle('solutions:getAll', async () => {
   try { return await api.get('/solutions') }
   catch { return [] }
+})
+ipcMain.handle('solutions:getById', async (_e, id: number) => {
+  try { return await api.get(`/solutions/${id}`) }
+  catch (err: any) { return { error: err.message } }
+})
+ipcMain.handle('solutions:create', async (_e, data: any) => {
+  try { return await api.post('/solutions', data) }
+  catch (err: any) { return { error: err.message } }
+})
+ipcMain.handle('solutions:update', async (_e, id: number, data: any) => {
+  try { return await api.put(`/solutions/${id}`, data) }
+  catch (err: any) { return { error: err.message } }
+})
+ipcMain.handle('solutions:delete', async (_e, id: number) => {
+  try { return await api.delete(`/solutions/${id}`) }
+  catch (err: any) { return { error: err.message } }
 })
 
 // ── PRODUCTS ─────────────────────────────────────────────────
@@ -357,16 +428,19 @@ ipcMain.handle('survey:delete', async (_e, id: number) => {
   catch (err: any) { return { error: err.message } }
 })
 
-// ── FORM TEMPLATES ────────────────────────────────────────────
+// ── formTemplates ─────────────────────────────────────────────
 ipcMain.handle('formTemplates:getAll', async (_e, solution_id?: number) => {
   try {
-    return await api.get('/form-templates', solution_id ? { solution_id } : undefined)
-  } catch { return [] }
+    const params = solution_id ? { solution_id } : {}
+    const r = await api.get<any>('/form-templates', params)
+    return Array.isArray(r) ? r : (r as any)?.data ?? []
+  }
+  catch { return [] }
 })
 
 ipcMain.handle('formTemplates:getById', async (_e, id: number) => {
-  try { return await api.get(`/form-templates/${id}`) }
-  catch (err: any) { return { error: err.message } }
+  try { return await api.get<any>(`/form-templates/${id}`) }
+  catch { return null }
 })
 
 ipcMain.handle('formTemplates:create', async (_e, data: any) => {
@@ -382,4 +456,22 @@ ipcMain.handle('formTemplates:update', async (_e, id: number, data: any) => {
 ipcMain.handle('formTemplates:delete', async (_e, id: number) => {
   try { return await api.delete(`/form-templates/${id}`) }
   catch (err: any) { return { error: err.message } }
+})
+
+// ── Upload ảnh lên Supabase Storage ──────────────────────────
+// Mở file picker → upload → trả về public URL
+ipcMain.handle('upload:image', async (_e, folder: string, oldUrl?: string) => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Chọn ảnh',
+      filters: [{ name: 'Hình ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+      properties: ['openFile'],
+    })
+    if (canceled || !filePaths.length) return { canceled: true }
+
+    const url = await apiUpload(folder, filePaths[0], oldUrl)
+    return { url }
+  } catch (err: any) {
+    return { error: err.message }
+  }
 })
