@@ -127,26 +127,21 @@ export const createSurvey = asyncHandler(async (req: Request, res: Response) => 
  * PUT /surveys/:id — Update survey report
  */
 export const updateSurvey = asyncHandler(async (req: Request, res: Response) => {
-  const {
-    report_type, project_name, customer_name, site_address,
-    survey_date, surveyor_name, status, general_note, image_url,
-    form_data, form_template_id,   // ← thêm để lưu data form (kể cả URL ảnh)
-  } = req.body
+  const { report_type, project_name, customer_name, site_address, survey_date, surveyor_name, status, general_note, image_url } =
+    req.body
 
   const survey = await prisma.surveyReport.update({
     where: { id: parseInt(req.params.id) },
     data: {
-      ...(report_type       && { report_type }),
-      ...(project_name      && { project_name }),
-      ...(customer_name     !== undefined && { customer_name }),
-      ...(site_address      !== undefined && { site_address }),
-      ...(survey_date       !== undefined && { survey_date }),
-      ...(surveyor_name     !== undefined && { surveyor_name }),
-      ...(status            && { status }),
-      ...(general_note      !== undefined && { general_note }),
-      ...(image_url         !== undefined && { image_url }),
-      ...(form_data         !== undefined && { form_data }),
-      ...(form_template_id  !== undefined && { form_template_id: form_template_id ? parseInt(form_template_id) : null }),
+      ...(report_type    && { report_type }),
+      ...(project_name   && { project_name }),
+      ...(customer_name  !== undefined && { customer_name }),
+      ...(site_address   !== undefined && { site_address }),
+      ...(survey_date    !== undefined && { survey_date }),
+      ...(surveyor_name  !== undefined && { surveyor_name }),
+      ...(status         && { status }),
+      ...(general_note   !== undefined && { general_note }),
+      ...(image_url      !== undefined && { image_url })
     },
     include: { pom: true, creator: true, items: true }
   })
