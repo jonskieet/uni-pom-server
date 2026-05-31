@@ -44,7 +44,7 @@ export const getBrandById = asyncHandler(async (req: Request, res: Response) => 
  * POST /brands — Create brand (admin only)
  */
 export const createBrand = asyncHandler(async (req: Request, res: Response) => {
-  const { name, short_name, country, website, is_active } = req.body
+  const { name, short_name, country, website, is_active, logo_path } = req.body
 
   if (!name) {
     throw new AppError(400, 'name is required')
@@ -56,6 +56,7 @@ export const createBrand = asyncHandler(async (req: Request, res: Response) => {
       short_name,
       country,
       website,
+      logo_path,
       is_active: is_active !== undefined ? is_active : true
     }
   })
@@ -67,16 +68,17 @@ export const createBrand = asyncHandler(async (req: Request, res: Response) => {
  * PUT /brands/:id — Update brand
  */
 export const updateBrand = asyncHandler(async (req: Request, res: Response) => {
-  const { name, short_name, country, website, is_active } = req.body
+  const { name, short_name, country, website, is_active, logo_path } = req.body
 
   const brand = await prisma.brand.update({
     where: { id: parseInt(req.params.id) },
     data: {
-      ...(name && { name }),
+      ...(name       && { name }),
       ...(short_name !== undefined && { short_name }),
-      ...(country !== undefined && { country }),
-      ...(website !== undefined && { website }),
-      ...(is_active !== undefined && { is_active })
+      ...(country    !== undefined && { country }),
+      ...(website    !== undefined && { website }),
+      ...(logo_path  !== undefined && { logo_path }),
+      ...(is_active  !== undefined && { is_active })
     }
   })
 

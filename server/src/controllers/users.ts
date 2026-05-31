@@ -21,6 +21,7 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
       full_name: true,
       role: true,
       is_active: true,
+      avatar_url: true,
       created_at: true
     },
     orderBy: { created_at: 'desc' }
@@ -41,6 +42,7 @@ export const getUserById = asyncHandler(async (req: Request, res: Response) => {
       full_name: true,
       role: true,
       is_active: true,
+      avatar_url: true,
       created_at: true
     }
   })
@@ -88,21 +90,23 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
  * PUT /users/:id — Update user (admin only)
  */
 export const updateUser = asyncHandler(async (req: Request, res: Response) => {
-  const { full_name, role, is_active } = req.body
+  const { full_name, role, is_active, avatar_url } = req.body
 
-  const user = await prisma.user.update({
+  const user = await prisma.user.update({\
     where: { id: parseInt(req.params.id) },
     data: {
-      ...(full_name && { full_name }),
-      ...(role && { role }),
-      ...(is_active !== undefined && { is_active })
+      ...(full_name   && { full_name }),
+      ...(role        && { role }),
+      ...(is_active   !== undefined && { is_active }),
+      ...(avatar_url  !== undefined && { avatar_url })
     },
     select: {
       id: true,
       username: true,
       full_name: true,
       role: true,
-      is_active: true
+      is_active: true,
+      avatar_url: true
     }
   })
 

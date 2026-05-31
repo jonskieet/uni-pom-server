@@ -14,6 +14,7 @@ import brandsRoutes from './routes/brands'
 import categoriesRoutes from './routes/categories'
 import solutionsRoutes from './routes/solutions'
 import formTemplatesRoutes from './routes/formTemplates'
+import uploadRoutes from './routes/upload'
 import { errorHandler, notFoundHandler } from './middleware/errorHandler'
 
 export function createApp(): Express {
@@ -54,6 +55,7 @@ export function createApp(): Express {
   app.use('/api/categories', categoriesRoutes)
   app.use('/api/solutions', solutionsRoutes)
   app.use('/api/form-templates', formTemplatesRoutes)
+  app.use('/api/upload', uploadRoutes)
 
   // ============================================================
   // ERROR HANDLING

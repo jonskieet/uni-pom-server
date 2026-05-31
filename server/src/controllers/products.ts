@@ -94,7 +94,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const {
     brand_id, category_id, name, part_number,
     unit, price, vat_rate, status,
-    description, spec, origin, warranty
+    description, spec, origin, warranty, image_path
   } = req.body
 
   if (!brand_id || !category_id || !name) {
@@ -107,14 +107,15 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
       category_id,
       name,
       part_number,
-      unit:     unit     || 'Cái',
-      price:    price    || 0,
-      vat_rate: vat_rate || 0.1,
-      status:   status   || 'active',
+      unit:       unit     || 'Cái',
+      price:      price    || 0,
+      vat_rate:   vat_rate || 0.1,
+      status:     status   || 'active',
       description,
       spec,
       origin,
       warranty,
+      image_path,
       created_by: req.user?.id
     },
     include: { brand: true, category: true }
@@ -130,7 +131,7 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   const {
     brand_id, category_id, name, part_number,
     unit, price, vat_rate, status,
-    description, spec, origin, warranty
+    description, spec, origin, warranty, image_path
   } = req.body
 
   const id = parseInt(req.params.id)
@@ -165,7 +166,8 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
       ...(description !== undefined && { description }),
       ...(spec        !== undefined && { spec }),
       ...(origin      !== undefined && { origin }),
-      ...(warranty    !== undefined && { warranty })
+      ...(warranty    !== undefined && { warranty }),
+      ...(image_path  !== undefined && { image_path })
     },
     include: { brand: true, category: true }
   })

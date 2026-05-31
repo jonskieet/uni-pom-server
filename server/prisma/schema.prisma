@@ -22,6 +22,7 @@ model User {
   role          Role
   password_hash String
   is_active     Boolean  @default(true)
+  avatar_url    String?
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
@@ -232,6 +233,7 @@ model SurveyReport {
   surveyor_name String?
   status           SurveyStatus @default(draft)
   general_note     String?
+  image_url        String?
   form_template_id Int?
   form_data        Json?
   created_at       DateTime @default(now())
