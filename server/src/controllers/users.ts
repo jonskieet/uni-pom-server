@@ -92,7 +92,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
 export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   const { full_name, role, is_active, avatar_url } = req.body
 
-  const user = await prisma.user.update({\
+  const user = await prisma.user.update({
     where: { id: parseInt(req.params.id) },
     data: {
       ...(full_name   && { full_name }),
