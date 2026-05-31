@@ -125,6 +125,40 @@ export const deleteUser = asyncHandler(async (req: Request, res: Response) => {
 })
 
 /**
+ * PUT /users/:id/avatar — Cập nhật avatar (admin hoặc chính user đó)
+ */
+export const updateAvatar = asyncHandler(async (req: Request, res: Response) => {
+  const targetId = parseInt(req.params.id)
+  const requesterId = req.user?.id
+  const requesterRole = req.user?.role
+
+  // Chỉ cho phép admin hoặc chính user đó cập nhật avatar
+  if (requesterRole !== 'admin' && requesterId !== targetId) {
+    throw new AppError(403, 'Bạn không có quyền cập nhật avatar của người dùng khác')
+  }
+
+  const { avatar_url } = req.body
+  if (avatar_url === undefined) {
+    throw new AppError(400, 'avatar_url là bắt buộc')
+  }
+
+  const user = await prisma.user.update({
+    where: { id: targetId },
+    data: { avatar_url },
+    select: {
+      id: true,
+      username: true,
+      full_name: true,
+      role: true,
+      is_active: true,
+      avatar_url: true
+    }
+  })
+
+  res.json(successResponse(user))
+})
+
+/**
  * PUT /users/:id/reset-password — Đặt lại mật khẩu (admin only)
  */
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
