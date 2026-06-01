@@ -92,8 +92,9 @@ model Product {
   name         String
   part_number  String? @unique
   unit         String  @default("Cái")
-  price        Decimal @default(0)
-  vat_rate     Decimal @default(0.10)
+  price        Decimal  @default(0)
+  sell_price   Decimal?
+  vat_rate     Decimal  @default(0.10)
   status       ProductStatus @default(active)
   description  String?
   spec         String?
