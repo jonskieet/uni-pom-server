@@ -149,7 +149,7 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
           old_price:  current.price,
           new_price:  price,
           changed_by: req.user?.id ?? null,
-          note:       'Cập nhật giá'
+          note:       req.body._price_note || 'Cập nhật giá nhập'
         }
       })
     }
@@ -185,4 +185,32 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
 export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
   await prisma.product.delete({ where: { id: parseInt(req.params.id) } })
   res.json(successResponse(null, 'Đã xóa sản phẩm'))
+})
+
+/**
+ * GET /products/:id/price-history — Lấy lịch sử thay đổi giá nhập
+ */
+export const getPriceHistory = asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+
+  const history = await prisma.priceHistory.findMany({
+    where: { product_id: id },
+    orderBy: { changed_at: 'desc' },
+    include: {
+      user: { select: { id: true, full_name: true, username: true } }
+    }
+  })
+
+  const mapped = history.map(h => ({
+    id:              h.id,
+    product_id:      h.product_id,
+    old_price:       Number(h.old_price),
+    new_price:       Number(h.new_price),
+    changed_by:      h.changed_by,
+    changed_by_name: h.user?.full_name ?? h.user?.username ?? null,
+    changed_at:      h.changed_at,
+    note:            h.note,
+  }))
+
+  res.json(successResponse(mapped))
 })
