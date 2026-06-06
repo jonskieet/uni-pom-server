@@ -24,7 +24,7 @@ model User {
   id            Int      @id @default(autoincrement())
   username      String   @unique
   full_name     String
-  role          Role
+  role          String
   password_hash String
   is_active     Boolean  @default(true)
   avatar_url    String?

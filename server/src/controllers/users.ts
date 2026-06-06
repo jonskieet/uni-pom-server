@@ -88,29 +88,46 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
 
 /**
  * PUT /users/:id — Update user (admin only)
+ * Accepts is_active as boolean | 0 | 1 | "0" | "1"
  */
 export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   const { full_name, role, is_active, avatar_url } = req.body
 
-  const user = await prisma.user.update({
-    where: { id: parseInt(req.params.id) },
-    data: {
-      ...(full_name   && { full_name }),
-      ...(role        && { role }),
-      ...(is_active   !== undefined && { is_active }),
-      ...(avatar_url  !== undefined && { avatar_url })
-    },
-    select: {
-      id: true,
-      username: true,
-      full_name: true,
-      role: true,
-      is_active: true,
-      avatar_url: true
-    }
-  })
+  // Normalise is_active: DB expects Boolean, frontend may send 0/1/true/false
+  let normalizedIsActive: boolean | undefined = undefined
+  if (is_active !== undefined && is_active !== null) {
+    normalizedIsActive = is_active === true || is_active === 1 || is_active === '1'
+  }
 
-  res.json(successResponse(user))
+  try {
+    const user = await prisma.user.update({
+      where: { id: parseInt(req.params.id) },
+      data: {
+        ...(full_name !== undefined && full_name !== null && { full_name }),
+        ...(role !== undefined && role !== null && { role }),
+        ...(normalizedIsActive !== undefined && { is_active: normalizedIsActive }),
+        ...(avatar_url !== undefined && { avatar_url }),
+        updated_at: new Date(), // explicit fallback in case @updatedAt decorator isn't applied
+      },
+      select: {
+        id: true,
+        username: true,
+        full_name: true,
+        role: true,
+        is_active: true,
+        avatar_url: true
+      }
+    })
+
+    res.json(successResponse(user))
+  } catch (err: any) {
+    // Prisma validation errors (invalid enum value, missing required field, etc.)
+    if (err.name === 'PrismaClientValidationError') {
+      const detail = err.message.split('\n').filter(Boolean).pop() ?? ''
+      throw new AppError(400, `Dữ liệu không hợp lệ: ${detail}`)
+    }
+    throw err
+  }
 })
 
 /**
@@ -132,7 +149,6 @@ export const updateAvatar = asyncHandler(async (req: Request, res: Response) => 
   const requesterId = req.user?.id
   const requesterRole = req.user?.role
 
-  // Chỉ cho phép admin hoặc chính user đó cập nhật avatar
   if (requesterRole !== 'admin' && requesterId !== targetId) {
     throw new AppError(403, 'Bạn không có quyền cập nhật avatar của người dùng khác')
   }
