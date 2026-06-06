@@ -3,12 +3,16 @@
 // ============================================================
 
 import { Request, Response } from 'express'
+import { PrismaClient } from '@prisma/client'
 import { generateToken, JwtPayload } from '../utils/jwt'
 import { comparePassword, hashPassword } from '../utils/password'
 import { successResponse, errorResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
-import { prisma } from '../lib/prisma'
 
+// ── Prisma singleton (shared connection pool) ────────────────
+const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
+if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
+const prisma = globalForPrisma._prisma
 
 /**
  * POST /auth/login

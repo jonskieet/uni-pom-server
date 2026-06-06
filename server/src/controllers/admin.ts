@@ -3,11 +3,14 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { Prisma, PomStatus } from '@prisma/client'
+import { PrismaClient, Prisma, PomStatus } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { asyncHandler } from '../middleware/errorHandler'
-import { prisma } from '../lib/prisma'
 
+// ── Prisma singleton (shared connection pool) ────────────────
+const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
+if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
+const prisma = globalForPrisma._prisma
 
 // ── GET /admin/dashboard — Tổng quan nhanh ────────────────────
 

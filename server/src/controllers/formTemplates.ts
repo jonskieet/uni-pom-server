@@ -1,9 +1,13 @@
 // server/src/controllers/formTemplates.ts
 import { Request, Response } from 'express'
+import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
-import { prisma } from '../lib/prisma'
 
+// ── Prisma singleton (shared connection pool) ────────────────
+const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
+if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
+const prisma = globalForPrisma._prisma
 
 /** GET /form-templates?solution_id=X */
 export const getFormTemplates = asyncHandler(async (req: Request, res: Response) => {
