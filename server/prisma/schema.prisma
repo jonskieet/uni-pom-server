@@ -1,5 +1,10 @@
 // ============================================================
-// Prisma Schema for UNI-POM Database
+// Prisma Schema for UNI-POM Database — v2 (upgraded)
+// Thay đổi so với v1:
+//   1. Role: thêm sales_admin
+//   2. PomStatus: mở rộng từ 4 → 10 trạng thái
+//   3. Model AuditLog: ghi lại mọi chuyển trạng thái
+//   4. Pom: thêm assigned_sale_id, sale_admin_id, closed_at
 // ============================================================
 
 generator client {
@@ -26,19 +31,33 @@ model User {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
-  poms           Pom[]
-  pomReviews     Pom[]               @relation("ReviewedBy")
-  products       Product[]
-  priceHistory   PriceHistory[]
-  surveyReports  SurveyReport[]
+  // Relations hiện có
+  poms              Pom[]    @relation("CreatedPoms")
+  pomReviews        Pom[]    @relation("ReviewedBy")
+  products          Product[]
+  priceHistory      PriceHistory[]
+  surveyReports     SurveyReport[]
+  formTemplates     FormTemplate[]
+
+  // Relations mới v2
+  assignedSalePoms  Pom[]    @relation("AssignedSale")      // Sale phụ trách
+  saleAdminPoms     Pom[]    @relation("PricedBySaleAdmin") // Sale Admin định giá
+  auditLogs         AuditLog[]
 
   @@index([username])
+  @@index([role])
   @@map("users")
-  formTemplates FormTemplate[]   // ← THÊM
 }
 
+// Role: thêm sales_admin
+// - sales_admin (cũ là sales): nhận BOM đã duyệt, điều chỉnh giá, gửi cho Sale
+// - sales (mới):               nhận BOM từ SaleAdmin, tư vấn KH, chốt HĐ
+// - technical:                 tạo BOM + báo cáo khảo sát
+// - technical_lead:            duyệt BOM, xử lý sự cố thi công
+// - admin:                     giám sát toàn bộ, không can thiệp flow
 enum Role {
   admin
+  sales_admin
   sales
   technical
   technical_lead
@@ -86,15 +105,15 @@ model Category {
 // PRODUCTS
 // ============================================================
 model Product {
-  id           Int     @id @default(autoincrement())
+  id           Int           @id @default(autoincrement())
   brand_id     Int
   category_id  Int
   name         String
-  part_number  String? @unique
-  unit         String  @default("Cái")
-  price        Decimal  @default(0)
+  part_number  String?       @unique
+  unit         String        @default("Cái")
+  price        Decimal       @default(0)
   sell_price   Decimal?
-  vat_rate     Decimal  @default(0.10)
+  vat_rate     Decimal       @default(0.10)
   status       ProductStatus @default(active)
   description  String?
   spec         String?
@@ -102,8 +121,8 @@ model Product {
   warranty     String?
   image_path   String?
   created_by   Int?
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  created_at   DateTime      @default(now())
+  updated_at   DateTime      @updatedAt
 
   brand        Brand       @relation(fields: [brand_id], references: [id], onDelete: Restrict)
   category     Category    @relation(fields: [category_id], references: [id], onDelete: Restrict)
@@ -119,9 +138,9 @@ model Product {
 }
 
 enum ProductStatus {
-  active      @map("active")
-  discontinued @map("discontinued")
-  draft       @map("draft")
+  active
+  discontinued
+  draft
 }
 
 // ============================================================
@@ -147,68 +166,91 @@ model PriceHistory {
 // SOLUTIONS
 // ============================================================
 model Solution {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique
-  code        String  @unique
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  code        String   @unique
   description String?
-  is_active   Boolean @default(true)
+  is_active   Boolean  @default(true)
   created_at  DateTime @default(now())
 
   poms          Pom[]
-  formTemplates FormTemplate[]   // ← THÊM DÒNG NÀY
+  formTemplates FormTemplate[]
 
   @@index([code])
   @@map("solutions")
 }
+
 // ============================================================
-// POMS
+// POMS — v2 (mở rộng)
 // ============================================================
 model Pom {
-  id            Int      @id @default(autoincrement())
-  pom_code      String   @unique
-  solution_id   Int?
-  created_by    Int
-  reviewed_by   Int?
-  project_name  String
-  customer_name String?
-  status        PomStatus @default(draft)
-  note          String?
-  return_reason String?
-  exported_at   DateTime?
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  id              Int       @id @default(autoincrement())
+  pom_code        String    @unique
+  solution_id     Int?
+  created_by      Int                           // Kỹ thuật tạo
+  reviewed_by     Int?                          // TP KT duyệt
+  assigned_sale_id    Int?                      // Sale phụ trách (mới v2)
+  sale_admin_id       Int?                      // Sale Admin định giá (mới v2)
+  project_name    String
+  customer_name   String?
+  status          PomStatus @default(draft)
+  note            String?
+  return_reason   String?
+  revision_count  Int       @default(0)         // Số lần sửa (cho Admin KPI)
+  exported_at     DateTime?
+  closed_at       DateTime?                     // Khi chốt hoặc lost (mới v2)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
 
-  solution     Solution?  @relation(fields: [solution_id], references: [id], onDelete: SetNull)
-  creator      User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
-  reviewer     User?      @relation("ReviewedBy", fields: [reviewed_by], references: [id], onDelete: SetNull)
-  items        PomItem[]
-  survey       SurveyReport?
+  solution         Solution? @relation(fields: [solution_id], references: [id], onDelete: SetNull)
+  creator          User      @relation("CreatedPoms", fields: [created_by], references: [id], onDelete: Restrict)
+  reviewer         User?     @relation("ReviewedBy", fields: [reviewed_by], references: [id], onDelete: SetNull)
+  assignedSale     User?     @relation("AssignedSale", fields: [assigned_sale_id], references: [id], onDelete: SetNull)
+  saleAdmin        User?     @relation("PricedBySaleAdmin", fields: [sale_admin_id], references: [id], onDelete: SetNull)
+  items            PomItem[]
+  survey           SurveyReport?
+  auditLogs        AuditLog[]
 
   @@index([status])
   @@index([created_by])
+  @@index([assigned_sale_id])
   @@index([pom_code])
   @@map("poms")
 }
 
+// PomStatus — mở rộng từ 4 lên 10 trạng thái
+// Luồng chính:
+//   draft → submitted → tp_approved → pricing_done → sent_to_client
+//   → negotiating → closed_won | closed_lost
+// Nhánh sửa (từ negotiating):
+//   → revision_price (Sale Admin định giá lại) → pricing_done
+//   → revision_tech  (Kỹ thuật sửa)           → submitted (TP duyệt lại)
 enum PomStatus {
-  draft      @map("draft")
-  submitted  @map("submitted")
-  reviewed   @map("reviewed")
-  exported   @map("exported")
+  draft           // KT đang soạn
+  submitted       // KT đã nộp, chờ TP KT duyệt
+  tp_approved     // TP KT đã duyệt, chờ Sale Admin định giá
+  pricing_done    // Sale Admin đã định giá, chờ Sale gửi KH
+  sent_to_client  // Sale đã gửi KH, chờ phản hồi
+  negotiating     // KH đang thương lượng
+  revision_price  // Sale gửi trả Sale Admin để sửa giá
+  revision_tech   // Sale gửi trả Kỹ thuật để sửa phương án
+  closed_won      // Chốt thành công
+  closed_lost     // Không chốt được
 }
 
 // ============================================================
 // POM ITEMS
 // ============================================================
 model PomItem {
-  id         Int      @id @default(autoincrement())
-  pom_id     Int
-  product_id Int
-  quantity   Int      @db.SmallInt
-  unit_price Decimal
-  vat_rate   Decimal @default(0.10)
-  note       String?
-  sort_order Int      @default(0)
+  id            Int     @id @default(autoincrement())
+  pom_id        Int
+  product_id    Int
+  quantity      Int     @db.SmallInt
+  unit_price    Decimal                   // Giá gốc từ Kỹ thuật
+  sale_price    Decimal?                  // Giá Sale Admin điều chỉnh (mới v2)
+  vat_rate      Decimal @default(0.10)
+  note          String?
+  sort_order    Int     @default(0)
 
   pom     Pom     @relation(fields: [pom_id], references: [id], onDelete: Cascade)
   product Product @relation(fields: [product_id], references: [id], onDelete: Restrict)
@@ -219,30 +261,72 @@ model PomItem {
 }
 
 // ============================================================
+// AUDIT LOG — v2 (mới hoàn toàn)
+// Ghi lại mọi chuyển trạng thái POM → Admin giám sát được toàn bộ lịch sử
+// ============================================================
+model AuditLog {
+  id          Int        @id @default(autoincrement())
+  pom_id      Int
+  actor_id    Int?                          // User thực hiện hành động
+  from_status PomStatus?                    // Trạng thái trước (null = tạo mới)
+  to_status   PomStatus                     // Trạng thái sau
+  action      AuditAction                   // Loại hành động
+  note        String?                       // Lý do / ghi chú
+  metadata    Json?                         // Dữ liệu bổ sung (VD: giá cũ/mới)
+  created_at  DateTime   @default(now())
+
+  pom   Pom   @relation(fields: [pom_id], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actor_id], references: [id], onDelete: SetNull)
+
+  @@index([pom_id])
+  @@index([actor_id])
+  @@index([created_at])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+enum AuditAction {
+  created           // Kỹ thuật tạo BOM
+  submitted         // Kỹ thuật nộp lên TP KT
+  tp_approved       // TP KT duyệt
+  tp_returned       // TP KT trả về (kèm lý do)
+  pricing_done      // Sale Admin hoàn tất định giá
+  sent_to_client    // Sale gửi KH
+  client_feedback   // KH phản hồi
+  return_to_price   // Sale gửi trả Sale Admin sửa giá
+  return_to_tech    // Sale gửi trả Kỹ thuật sửa phương án
+  price_revised     // Sale Admin sửa giá xong
+  tech_revised      // Kỹ thuật sửa phương án xong
+  tp_reapproved     // TP KT duyệt lại sau khi sửa KT
+  closed_won        // Chốt thành công
+  closed_lost       // Không chốt
+}
+
+// ============================================================
 // SURVEY REPORTS
 // ============================================================
 model SurveyReport {
-  id            Int      @id @default(autoincrement())
-  report_code   String   @unique
-  report_type   String
-  pom_id        Int      @unique
-  created_by    Int
-  project_name  String
-  customer_name String?
-  site_address  String?
-  survey_date   String?
-  surveyor_name String?
+  id               Int          @id @default(autoincrement())
+  report_code      String       @unique
+  report_type      String
+  pom_id           Int          @unique
+  created_by       Int
+  project_name     String
+  customer_name    String?
+  site_address     String?
+  survey_date      String?
+  surveyor_name    String?
   status           SurveyStatus @default(draft)
   general_note     String?
   image_url        String?
   form_template_id Int?
   form_data        Json?
-  created_at       DateTime @default(now())
-  updated_at       DateTime @updatedAt
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
 
-  pom        Pom        @relation(fields: [pom_id], references: [id], onDelete: Restrict)
-  creator    User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
-  items      SurveyItem[]
+  pom     Pom        @relation(fields: [pom_id], references: [id], onDelete: Restrict)
+  creator User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
+  items   SurveyItem[]
 
   @@index([pom_id])
   @@index([status])
@@ -250,24 +334,24 @@ model SurveyReport {
 }
 
 enum SurveyStatus {
-  draft     @map("draft")
-  completed @map("completed")
+  draft
+  completed
 }
 
 // ============================================================
 // SURVEY ITEMS
 // ============================================================
 model SurveyItem {
-  id                  Int     @id @default(autoincrement())
-  report_id           Int
-  product_id          Int?
-  product_name        String
-  quantity_proposed   Int     @default(0)
-  quantity_actual     Int     @default(0)
-  unit                String  @default("Cái")
-  location            String?
-  condition_note      String?
-  sort_order          Int     @default(0)
+  id                Int     @id @default(autoincrement())
+  report_id         Int
+  product_id        Int?
+  product_name      String
+  quantity_proposed Int     @default(0)
+  quantity_actual   Int     @default(0)
+  unit              String  @default("Cái")
+  location          String?
+  condition_note    String?
+  sort_order        Int     @default(0)
 
   report  SurveyReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
   product Product?     @relation(fields: [product_id], references: [id], onDelete: SetNull)
@@ -276,6 +360,9 @@ model SurveyItem {
   @@map("survey_items")
 }
 
+// ============================================================
+// FORM TEMPLATES
+// ============================================================
 model FormTemplate {
   id          Int      @id @default(autoincrement())
   solution_id Int
