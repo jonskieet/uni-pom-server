@@ -3,12 +3,11 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
 import { hashPassword } from '../utils/password'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 /**
  * GET /users — Get all users

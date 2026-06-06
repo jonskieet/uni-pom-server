@@ -4,11 +4,10 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 // Raw query vì system_settings chưa có trong Prisma schema
 // Dùng $queryRaw để đọc / $executeRaw để ghi

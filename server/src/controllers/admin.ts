@@ -3,11 +3,11 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient, Prisma, PomStatus } from '@prisma/client'
+import { Prisma, PomStatus } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { asyncHandler } from '../middleware/errorHandler'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 // ── GET /admin/dashboard — Tổng quan nhanh ────────────────────
 

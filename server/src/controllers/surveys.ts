@@ -3,11 +3,11 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient, SurveyStatus } from '@prisma/client'
+import { SurveyStatus } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 /**
  * Generate Survey Report code: SR-YYYYMMDD-XXXX

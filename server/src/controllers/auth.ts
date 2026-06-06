@@ -3,13 +3,12 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import { generateToken, JwtPayload } from '../utils/jwt'
 import { comparePassword, hashPassword } from '../utils/password'
 import { successResponse, errorResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 /**
  * POST /auth/login

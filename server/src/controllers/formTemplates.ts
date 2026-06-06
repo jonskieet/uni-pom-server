@@ -1,10 +1,9 @@
 // server/src/controllers/formTemplates.ts
 import { Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 /** GET /form-templates?solution_id=X */
 export const getFormTemplates = asyncHandler(async (req: Request, res: Response) => {

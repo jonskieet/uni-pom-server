@@ -4,11 +4,11 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient, Prisma, PomStatus, AuditAction } from '@prisma/client'
+import { Prisma, PomStatus, AuditAction } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { prisma } from '../lib/prisma'
 
-const prisma = new PrismaClient()
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ const POM_FULL_INCLUDE = {
 
 /** Ghi audit log — dùng trong transaction hoặc standalone */
 async function writeAuditLog(
-  tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>,
+  tx: Omit<'$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>,
   {
     pomId,
     actorId,
