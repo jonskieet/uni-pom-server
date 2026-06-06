@@ -60,7 +60,7 @@ async function writeAuditLog(
       to_status: toStatus,
       action,
       note: note ?? null,
-      metadata: metadata ?? Prisma.JsonNull,
+      metadata: (metadata ?? Prisma.JsonNull) as any,
     },
   })
 }

@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, Prisma, PomStatus } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { asyncHandler } from '../middleware/errorHandler'
 
@@ -320,8 +320,8 @@ export const getAllPoms = asyncHandler(async (req: Request, res: Response) => {
     }
   }
 
-  const where = {
-    ...(status && { status }),
+  const where: Prisma.PomWhereInput = {
+    ...(status && { status: status as PomStatus }),
     ...(techId && { created_by: techId }),
     ...(saleId && { assigned_sale_id: saleId }),
     ...stuckFilter,
