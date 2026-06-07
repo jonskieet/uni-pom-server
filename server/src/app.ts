@@ -17,6 +17,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler'
 import formTemplatesRoutes from './routes/formTemplates'
 import adminRoutes from './routes/admin'
 import settingsRoutes from './routes/settings'
+import uploadRoutes from './routes/upload'
 
 export function createApp(): Express {
   const app = express()
@@ -58,6 +59,7 @@ export function createApp(): Express {
   app.use('/api/form-templates', formTemplatesRoutes)
   app.use('/api/admin', adminRoutes)
   app.use('/api/settings', settingsRoutes)
+  app.use('/api/upload', uploadRoutes)
 
   // ============================================================
   // ERROR HANDLING

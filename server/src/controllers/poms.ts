@@ -77,7 +77,8 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
   const statusParam = req.query.status as string | undefined
   const createdBy = req.query.created_by ? parseInt(req.query.created_by as string) : undefined
   const excludeSurveyed = req.query.exclude_surveyed === 'true'
-  const assignedSale = req.query.assigned_sale_id ? parseInt(req.query.assigned_sale_id as string) : undefined
+  const assignedSale   = req.query.assigned_sale_id ? parseInt(req.query.assigned_sale_id as string) : undefined
+  const saleAdminId    = req.query.sale_admin_id    ? parseInt(req.query.sale_admin_id    as string) : undefined
 
   const status = (statusParam && Object.values(PomStatus).includes(statusParam as PomStatus))
     ? (statusParam as PomStatus)
@@ -87,6 +88,7 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
     ...(status && { status }),
     ...(createdBy && { created_by: createdBy }),
     ...(assignedSale && { assigned_sale_id: assignedSale }),
+    ...(saleAdminId  && { sale_admin_id:    saleAdminId  }),
     ...(excludeSurveyed && { survey: null }),
   }
 
