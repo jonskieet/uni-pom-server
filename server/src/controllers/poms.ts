@@ -393,7 +393,9 @@ export const clientFeedback = asyncHandler(async (req: Request, res: Response) =
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.pom.update({
       where: { id: pomId },
-      data: { status: 'negotiating', note: note ?? pom.note },
+      // BUG FIX: Không ghi đè pom.note bằng customer feedback.
+      // pom.note là ghi chú kỹ thuật gốc của BOM; phản hồi KH chỉ lưu vào audit_log.
+      data: { status: 'negotiating' },
       include: POM_FULL_INCLUDE,
     })
     await writeAuditLog(tx, {
@@ -469,6 +471,8 @@ export const returnToTech = asyncHandler(async (req: Request, res: Response) => 
       data: {
         status: 'revision_tech',
         revision_count: { increment: 1 },
+        // BUG FIX: Lưu yêu cầu sửa vào return_reason để Kỹ thuật đọc được.
+        return_reason: reason.trim(),
       },
       include: POM_FULL_INCLUDE,
     })
