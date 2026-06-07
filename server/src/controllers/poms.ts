@@ -125,7 +125,7 @@ export const getPomById = asyncHandler(async (req: Request, res: Response) => {
 // ── POST /poms ─────────────────────────────────────────────────
 
 export const createPom = asyncHandler(async (req: Request, res: Response) => {
-  const { solution_id, project_name, customer_name, note } = req.body
+  const { solution_id, project_name, customer_name, note, ward_id } = req.body
   const actorId = req.user!.id
 
   if (!project_name?.trim()) throw new AppError(400, 'project_name is required')
@@ -140,6 +140,7 @@ export const createPom = asyncHandler(async (req: Request, res: Response) => {
         customer_name: customer_name?.trim() ?? null,
         note: note?.trim() ?? null,
         status: 'draft',
+        ...(ward_id ? { ward_id: parseInt(ward_id) } : {}),
       },
       include: POM_FULL_INCLUDE,
     })
