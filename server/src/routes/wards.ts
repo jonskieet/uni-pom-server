@@ -2,7 +2,7 @@
 // server/src/routes/wards.ts
 // ============================================================
 import { Router } from 'express'
-import { authenticateToken } from '../middleware/auth'
+import { authMiddleware } from '../middleware/auth'
 import {
   getProvinces, getDistricts,
   getWards, getWardById, createWard, updateWard, deleteWard,
@@ -12,7 +12,7 @@ import {
 } from '../controllers/wards'
 
 const router = Router()
-router.use(authenticateToken)
+router.use(authMiddleware)
 
 router.get('/provinces',          getProvinces)
 router.get('/districts',          getDistricts)
