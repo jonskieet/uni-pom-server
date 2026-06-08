@@ -81,7 +81,8 @@ export const getWards = asyncHandler(async (req: Request, res: Response) => {
 
   const rows = await prisma.$queryRawUnsafe<any[]>(`
     SELECT w.*, d.name AS district_name, d.type AS district_type,
-           p.name AS province_name, p.short_name AS province_short,
+           d.province_id,
+           p.id AS province_id, p.name AS province_name, p.short_name AS province_short,
            u.full_name AS assigned_sale_name,
            (SELECT COUNT(*)::int FROM contacts c WHERE c.ward_id = w.id AND c.is_active = TRUE) AS contact_count,
            (SELECT COUNT(*)::int FROM ward_activities a WHERE a.ward_id = w.id) AS activity_count,
@@ -103,7 +104,9 @@ export const getWards = asyncHandler(async (req: Request, res: Response) => {
 export const getWardById = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const [ward] = await prisma.$queryRaw<any[]>`
-    SELECT w.*, d.name AS district_name, p.name AS province_name, p.short_name AS province_short,
+    SELECT w.*, d.name AS district_name,
+           d.province_id,
+           p.id AS province_id, p.name AS province_name, p.short_name AS province_short,
            u.full_name AS assigned_sale_name,
            (SELECT COUNT(*)::int FROM contacts c WHERE c.ward_id = w.id AND c.is_active = TRUE) AS contact_count,
            (SELECT COUNT(*)::int FROM ward_activities a WHERE a.ward_id = w.id) AS activity_count,
@@ -172,7 +175,8 @@ export const deleteWard = asyncHandler(async (req: Request, res: Response) => {
 export const getWardSummary = asyncHandler(async (_req: Request, res: Response) => {
   const rows = await prisma.$queryRaw<any[]>`
     SELECT w.id, w.name, w.full_name, w.type, w.address, w.phone, w.relationship_status,
-           d.name AS district_name, p.name AS province_name, p.short_name AS province_short,
+           d.name AS district_name, d.province_id,
+           p.id AS province_id, p.name AS province_name, p.short_name AS province_short,
            c.full_name AS primary_contact_name, c.phone AS primary_contact_phone, c.title AS primary_contact_title
     FROM wards w
     LEFT JOIN districts d ON d.id = w.district_id
