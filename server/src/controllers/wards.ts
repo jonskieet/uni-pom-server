@@ -130,12 +130,14 @@ export const createWard = asyncHandler(async (req: Request, res: Response) => {
   } = req.body
   if (!district_id || !name) throw new AppError(400, 'district_id và name là bắt buộc')
   const autoFullName = full_name || `UBND ${type === 'phuong' ? 'Phường' : type === 'xa' ? 'Xã' : 'Thị trấn'} ${name}`
+  // Auto-generate code nếu không cung cấp (DB: code NOT NULL UNIQUE)
+  const autoCode = code || `W-${district_id}-${name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').replace(/[^a-zA-Z0-9]/g,'-').toLowerCase().replace(/-+/g,'-').slice(0,30)}-${Date.now().toString(36)}`
   const [ward] = await prisma.$queryRaw<any[]>`
     INSERT INTO wards (district_id,code,name,type,full_name,address,phone,email,website,
       relationship_status,first_visit_date,last_visit_date,
       current_leader_name,current_leader_title,current_leader_phone,current_leader_email,
       assigned_sale_id,note)
-    VALUES (${parseInt(district_id)},${code||null},${name},${type},${autoFullName},
+    VALUES (${parseInt(district_id)},${autoCode},${name},${type},${autoFullName},
       ${address||null},${phone||null},${email||null},${website||null},
       ${relationship_status},
       ${first_visit_date||null}::date,${last_visit_date||null}::date,
