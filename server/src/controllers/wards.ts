@@ -192,20 +192,54 @@ export const getWardSummary = asyncHandler(async (_req: Request, res: Response) 
 
 // ── CONTACTS ─────────────────────────────────────────────────
 export const getContacts = asyncHandler(async (req: Request, res: Response) => {
-  const ward_id = req.query.ward_id ? parseInt(req.query.ward_id as string) : null
-  const rows = ward_id
-    ? await prisma.$queryRaw<any[]>`
-        SELECT c.*, w.name AS ward_name, w.full_name AS ward_full_name
-        FROM contacts c LEFT JOIN wards w ON w.id = c.ward_id
-        WHERE c.is_active = TRUE AND c.ward_id = ${ward_id}
-        ORDER BY c.is_primary DESC, c.full_name
-      `
-    : await prisma.$queryRaw<any[]>`
-        SELECT c.*, w.name AS ward_name, w.full_name AS ward_full_name
-        FROM contacts c LEFT JOIN wards w ON w.id = c.ward_id
-        WHERE c.is_active = TRUE ORDER BY c.full_name
-      `
-  res.json(successResponse(rows))
+  const {
+    ward_id, province_id, district_id, search,
+    page = '1', limit = '50'
+  } = req.query
+
+  const skip = (parseInt(page as string) - 1) * parseInt(limit as string)
+  const lim  = parseInt(limit as string)
+
+  const conditions: string[] = ['c.is_active = TRUE']
+  const params: any[] = []
+
+  if (ward_id)     { params.push(parseInt(ward_id as string));     conditions.push(`c.ward_id = $${params.length}`) }
+  if (province_id) { params.push(parseInt(province_id as string)); conditions.push(`d.province_id = $${params.length}`) }
+  if (district_id) { params.push(parseInt(district_id as string)); conditions.push(`w.district_id = $${params.length}`) }
+  if (search) {
+    params.push(`%${search}%`)
+    conditions.push(`(c.full_name ILIKE $${params.length} OR c.phone ILIKE $${params.length} OR c.title ILIKE $${params.length} OR w.full_name ILIKE $${params.length} OR w.name ILIKE $${params.length})`)
+  }
+
+  const where = 'WHERE ' + conditions.join(' AND ')
+  const baseFrom = `
+    FROM contacts c
+    LEFT JOIN wards w     ON w.id = c.ward_id
+    LEFT JOIN districts d ON d.id = w.district_id
+    LEFT JOIN provinces p ON p.id = d.province_id
+  `
+
+  params.push(lim);  const limitIdx = params.length
+  params.push(skip); const skipIdx  = params.length
+
+  const rows = await prisma.$queryRawUnsafe<any[]>(`
+    SELECT c.*,
+           w.name AS ward_name, w.full_name AS ward_full_name,
+           w.relationship_status AS ward_relationship_status,
+           d.name AS district_name,
+           p.name AS province_name
+    ${baseFrom} ${where}
+    ORDER BY c.is_primary DESC, c.full_name
+    LIMIT $${limitIdx} OFFSET $${skipIdx}
+  `, ...params)
+
+  const countParams = params.slice(0, params.length - 2)
+  const [countRow] = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT COUNT(DISTINCT c.id)::int AS total ${baseFrom} ${where}`,
+    ...countParams
+  )
+
+  res.json(successResponse({ data: rows, total: countRow?.total ?? 0, page: parseInt(page as string), limit: lim }))
 })
 
 export const createContact = asyncHandler(async (req: Request, res: Response) => {
