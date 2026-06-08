@@ -14,6 +14,7 @@ import brandsRoutes from './routes/brands'
 import categoriesRoutes from './routes/categories'
 import solutionsRoutes from './routes/solutions'
 import { errorHandler, notFoundHandler } from './middleware/errorHandler'
+import uploadRoutes from './routes/upload'
 import formTemplatesRoutes from './routes/formTemplates'
 import adminRoutes from './routes/admin'
 import settingsRoutes from './routes/settings'
@@ -59,6 +60,7 @@ export function createApp(): Express {
   app.use('/api/form-templates', formTemplatesRoutes)
   app.use('/api/admin', adminRoutes)
   app.use('/api/settings', settingsRoutes)
+  app.use('/api/upload', uploadRoutes)   // ← FIX: đăng ký upload route
   app.use('/api', wardsRoutes)
 
   // ============================================================
