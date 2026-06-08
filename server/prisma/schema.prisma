@@ -193,6 +193,7 @@ model Pom {
   sale_admin_id       Int?                      // Sale Admin định giá (mới v2)
   project_name    String
   customer_name   String?
+  ward_id         Int?                          // UBND Phường/Xã liên kết (raw SQL table)
   status          PomStatus @default(draft)
   note            String?
   return_reason   String?
