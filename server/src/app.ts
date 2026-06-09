@@ -19,6 +19,7 @@ import formTemplatesRoutes from './routes/formTemplates'
 import adminRoutes from './routes/admin'
 import settingsRoutes from './routes/settings'
 import wardsRoutes from './routes/wards'
+import notificationsRoutes from './routes/notifications'
 
 export function createApp(): Express {
   const app = express()
@@ -62,6 +63,7 @@ export function createApp(): Express {
   app.use('/api/settings', settingsRoutes)
   app.use('/api/upload', uploadRoutes)   // ← FIX: đăng ký upload route
   app.use('/api', wardsRoutes)
+  app.use('/api/notifications', notificationsRoutes)
 
   // ============================================================
   // ERROR HANDLING

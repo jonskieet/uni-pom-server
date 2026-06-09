@@ -1,12 +1,13 @@
 // ============================================================
-// src/controllers/poms.ts — v2
-// State machine đầy đủ + ghi AuditLog mỗi chuyển trạng thái
+// src/controllers/poms.ts — v2 + notifications
+// State machine đầy đủ + ghi AuditLog + push Notification
 // ============================================================
 
 import { Request, Response } from 'express'
 import { PrismaClient, Prisma, PomStatus, AuditAction } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { createNotifications } from './notifications'
 
 // ── Prisma singleton (shared connection pool) ────────────────
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
@@ -211,6 +212,15 @@ export const submitPom = asyncHandler(async (req: Request, res: Response) => {
       toStatus: 'submitted',
       action: 'submitted',
     })
+    // Thông báo cho tất cả Trưởng phòng KT
+    const techLeads = await tx.user.findMany({ where: { role: 'technical_lead', is_active: true }, select: { id: true } })
+    await createNotifications(tx, techLeads.map(tl => ({
+      user_id: tl.id,
+      pom_id: pomId,
+      type: 'submitted',
+      title: '📋 BOM chờ duyệt',
+      message: `BOM "${u.project_name}" (${u.pom_code}) đã được nộp, cần phê duyệt.`,
+    })))
     return u
   })
 
@@ -246,6 +256,25 @@ export const approvePom = asyncHandler(async (req: Request, res: Response) => {
       toStatus: 'tp_approved',
       action: 'tp_approved',
     })
+    // Thông báo cho tất cả Sale Admin để định giá
+    const saleAdmins = await tx.user.findMany({ where: { role: 'sales_admin', is_active: true }, select: { id: true } })
+    // Thông báo cho KT người tạo BOM
+    await createNotifications(tx, [
+      ...saleAdmins.map(sa => ({
+        user_id: sa.id,
+        pom_id: pomId,
+        type: 'tp_approved',
+        title: '✅ BOM cần định giá',
+        message: `BOM "${u.project_name}" (${u.pom_code}) đã được TP KT duyệt, cần định giá.`,
+      })),
+      {
+        user_id: pom.created_by,
+        pom_id: pomId,
+        type: 'tp_approved',
+        title: '✅ BOM đã được duyệt',
+        message: `BOM "${u.project_name}" (${u.pom_code}) đã được Trưởng phòng KT phê duyệt.`,
+      },
+    ])
     return u
   })
 
@@ -285,6 +314,14 @@ export const returnPom = asyncHandler(async (req: Request, res: Response) => {
       action: 'tp_returned',
       note: reason.trim(),
     })
+    // Thông báo cho KT người tạo BOM
+    await createNotifications(tx, [{
+      user_id: pom.created_by,
+      pom_id: pomId,
+      type: 'tp_returned',
+      title: '↩️ BOM bị trả lại',
+      message: `BOM "${u.project_name}" (${u.pom_code}) bị TP KT trả về. Lý do: ${reason.trim()}`,
+    }])
     return u
   })
 
@@ -339,7 +376,25 @@ export const pricePom = asyncHandler(async (req: Request, res: Response) => {
       toStatus: 'pricing_done',
       action: pom.status === 'revision_price' ? 'price_revised' : 'pricing_done',
     })
-
+    // Thông báo cho Sale được giao và KT người tạo
+    const notifs = [{
+      user_id: parseInt(assigned_sale_id),
+      pom_id: pomId,
+      type: 'pricing_done',
+      title: '💼 BOM mới được giao',
+      message: `BOM "${u.project_name}" (${u.pom_code}) đã định giá xong, bạn phụ trách tư vấn khách hàng.`,
+    }]
+    // Nếu là sửa giá, notify KT biết đã xong
+    if (pom.status === 'revision_price') {
+      notifs.push({
+        user_id: pom.created_by,
+        pom_id: pomId,
+        type: 'price_revised',
+        title: '✏️ Giá BOM đã được cập nhật',
+        message: `BOM "${u.project_name}" (${u.pom_code}) đã được Sale Admin điều chỉnh giá xong.`,
+      } as any)
+    }
+    await createNotifications(tx, notifs)
     return u
   })
 
@@ -444,6 +499,15 @@ export const returnToPrice = asyncHandler(async (req: Request, res: Response) =>
       action: 'return_to_price',
       note: reason.trim(),
     })
+    // Thông báo Sale Admin cần sửa giá
+    const saleAdmins2 = await tx.user.findMany({ where: { role: 'sales_admin', is_active: true }, select: { id: true } })
+    await createNotifications(tx, saleAdmins2.map(sa => ({
+      user_id: sa.id,
+      pom_id: pomId,
+      type: 'return_to_price',
+      title: '💰 Yêu cầu điều chỉnh giá',
+      message: `BOM "${u.project_name}" (${u.pom_code}) cần sửa giá. Lý do: ${reason.trim()}`,
+    })))
     return u
   })
 
@@ -484,6 +548,14 @@ export const returnToTech = asyncHandler(async (req: Request, res: Response) => 
       action: 'return_to_tech',
       note: reason.trim(),
     })
+    // Thông báo KT người tạo BOM sửa phương án
+    await createNotifications(tx, [{
+      user_id: pom.created_by,
+      pom_id: pomId,
+      type: 'return_to_tech',
+      title: '🔧 Yêu cầu sửa phương án kỹ thuật',
+      message: `BOM "${u.project_name}" (${u.pom_code}) cần chỉnh sửa kỹ thuật. Lý do: ${reason.trim()}`,
+    }])
     return u
   })
 
@@ -515,6 +587,24 @@ export const reapprovePom = asyncHandler(async (req: Request, res: Response) => 
       toStatus: 'tp_approved',
       action: 'tp_reapproved',
     })
+    // Notify Sale Admin định giá lại và KT biết đã được duyệt
+    const saleAdmins3 = await tx.user.findMany({ where: { role: 'sales_admin', is_active: true }, select: { id: true } })
+    await createNotifications(tx, [
+      ...saleAdmins3.map(sa => ({
+        user_id: sa.id,
+        pom_id: pomId,
+        type: 'tp_reapproved',
+        title: '✅ BOM kỹ thuật đã được duyệt lại',
+        message: `BOM "${u.project_name}" (${u.pom_code}) đã được TP KT duyệt lại sau khi chỉnh sửa kỹ thuật.`,
+      })),
+      {
+        user_id: pom.created_by,
+        pom_id: pomId,
+        type: 'tp_reapproved',
+        title: '✅ Phương án kỹ thuật được chấp thuận',
+        message: `BOM "${u.project_name}" (${u.pom_code}) đã được TP KT duyệt lại sau chỉnh sửa.`,
+      },
+    ])
     return u
   })
 
@@ -559,6 +649,23 @@ export const closePom = asyncHandler(async (req: Request, res: Response) => {
       action,
       note: note ?? null,
     })
+    // Notify creator + sale admin kết quả chốt
+    const closedTitle = result === 'won' ? '🎉 Hợp đồng đã được chốt!' : '❌ Dự án không chốt được'
+    const closedMsg = result === 'won'
+      ? `BOM "${u.project_name}" (${u.pom_code}) đã chốt hợp đồng thành công!`
+      : `BOM "${u.project_name}" (${u.pom_code}) không chốt được (closed_lost).`
+    const notifyIds = new Set<number>([pom.created_by])
+    if (pom.sale_admin_id) notifyIds.add(pom.sale_admin_id)
+    // Notify tech lead
+    const tLeads = await tx.user.findMany({ where: { role: 'technical_lead', is_active: true }, select: { id: true } })
+    tLeads.forEach(tl => notifyIds.add(tl.id))
+    await createNotifications(tx, Array.from(notifyIds).map(uid => ({
+      user_id: uid,
+      pom_id: pomId,
+      type: result === 'won' ? 'closed_won' : 'closed_lost',
+      title: closedTitle,
+      message: closedMsg,
+    })))
     return u
   })
 

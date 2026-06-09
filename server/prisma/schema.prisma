@@ -43,6 +43,7 @@ model User {
   assignedSalePoms  Pom[]    @relation("AssignedSale")      // Sale phụ trách
   saleAdminPoms     Pom[]    @relation("PricedBySaleAdmin") // Sale Admin định giá
   auditLogs         AuditLog[]
+  notifications     Notification[]
 
   @@index([username])
   @@index([role])
@@ -211,6 +212,7 @@ model Pom {
   items            PomItem[]
   survey           SurveyReport?
   auditLogs        AuditLog[]
+  notifications    Notification[]
 
   @@index([status])
   @@index([created_by])
@@ -381,4 +383,27 @@ model FormTemplate {
 
   @@index([solution_id])
   @@map("form_templates")
+}
+
+// ============================================================
+// NOTIFICATIONS — Hệ thống thông báo nội bộ
+// Được tạo tự động mỗi khi có chuyển trạng thái BOM quan trọng
+// ============================================================
+model Notification {
+  id         Int      @id @default(autoincrement())
+  user_id    Int                                    // Người nhận
+  pom_id     Int?                                   // BOM liên quan (nullable)
+  type       String                                 // Loại: status_change | request_price | request_tech | approved | closed
+  title      String                                 // Tiêu đề ngắn
+  message    String                                 // Nội dung chi tiết
+  is_read    Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  user User  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  pom  Pom?  @relation(fields: [pom_id],  references: [id], onDelete: SetNull)
+
+  @@index([user_id, is_read])
+  @@index([pom_id])
+  @@index([created_at])
+  @@map("notifications")
 }
