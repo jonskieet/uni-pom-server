@@ -84,7 +84,17 @@ export const getSurveyById = asyncHandler(async (req: Request, res: Response) =>
     include: { pom: true, creator: true, items: { include: { product: true } } }
   })
 
-  res.json(successResponse(survey))
+  // BUG FIX: Include form template schema để frontend có thể map field key → label.
+  // getSurveyById không có relation tới FormTemplate nên phải query riêng.
+  let formTemplate = null
+  if (survey.form_template_id) {
+    formTemplate = await prisma.formTemplate.findUnique({
+      where: { id: survey.form_template_id },
+      select: { id: true, name: true, schema: true },
+    })
+  }
+
+  res.json(successResponse({ ...survey, formTemplate }))
 })
 
 /**
@@ -130,8 +140,11 @@ export const createSurvey = asyncHandler(async (req: Request, res: Response) => 
  * PUT /surveys/:id — Update survey report
  */
 export const updateSurvey = asyncHandler(async (req: Request, res: Response) => {
-  const { report_type, project_name, customer_name, site_address, survey_date, surveyor_name, status, general_note, image_url } =
-    req.body
+  const {
+    report_type, project_name, customer_name, site_address,
+    survey_date, surveyor_name, status, general_note, image_url,
+    form_data,  // ← FIX: field này bị thiếu trước đây, khiến ảnh và dữ liệu form không bao giờ được lưu
+  } = req.body
 
   const survey = await prisma.surveyReport.update({
     where: { id: parseInt(req.params.id) },
@@ -144,7 +157,8 @@ export const updateSurvey = asyncHandler(async (req: Request, res: Response) => 
       ...(surveyor_name  !== undefined && { surveyor_name }),
       ...(status         && { status }),
       ...(general_note   !== undefined && { general_note }),
-      ...(image_url      !== undefined && { image_url })
+      ...(image_url      !== undefined && { image_url }),
+      ...(form_data      !== undefined && { form_data }),  // ← FIX: lưu form_data (bao gồm URL ảnh)
     },
     include: { pom: true, creator: true, items: true }
   })
