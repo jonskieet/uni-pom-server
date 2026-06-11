@@ -181,9 +181,9 @@ export const getTasks = asyncHandler(async (req: Request, res: Response) => {
     LEFT JOIN users c  ON c.id = t.created_by
     LEFT JOIN task_checklists cl ON cl.task_id = t.id
     WHERE t.plan_id = ${planId}
-      AND (${assignedToF} IS NULL OR t.assigned_to = ${assignedToF})
-      AND (${statusF}     IS NULL OR t.status      = ${statusF})
-      AND (${priorityF}   IS NULL OR t.priority    = ${priorityF})
+      AND (${assignedToF}::int    IS NULL OR t.assigned_to = ${assignedToF}::int)
+      AND (${statusF}::text       IS NULL OR t.status      = ${statusF}::text)
+      AND (${priorityF}::text     IS NULL OR t.priority    = ${priorityF}::text)
     GROUP BY t.id, a.full_name, a.avatar_url, a.role, c.full_name
     ORDER BY t.bucket_id NULLS FIRST, t.sort_order, t.created_at
   `
