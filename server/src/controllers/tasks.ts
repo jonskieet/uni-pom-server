@@ -129,6 +129,33 @@ export const deleteBucket = asyncHandler(async (req: Request, res: Response) => 
   res.json(successResponse(null, 'Đã xóa nhóm'))
 })
 
+export const reorderBuckets = asyncHandler(async (req: Request, res: Response) => {
+  // body: { plan_id, ordered_ids: number[] }
+  const { plan_id, ordered_ids } = req.body
+  if (!plan_id || !Array.isArray(ordered_ids)) {
+    throw new AppError(400, 'Thiếu plan_id hoặc ordered_ids')
+  }
+  const planIdInt = parseInt(plan_id)
+
+  for (let i = 0; i < ordered_ids.length; i++) {
+    const bucketId = parseInt(ordered_ids[i])
+    await prisma.$executeRaw`
+      UPDATE buckets SET sort_order=${i}
+      WHERE id=${bucketId} AND plan_id=${planIdInt}
+    `
+  }
+
+  const buckets = await prisma.$queryRaw<any[]>`
+    SELECT b.*, COUNT(t.id)::int AS task_count
+    FROM buckets b
+    LEFT JOIN tasks t ON t.bucket_id = b.id
+    WHERE b.plan_id = ${planIdInt}
+    GROUP BY b.id
+    ORDER BY b.sort_order, b.id
+  `
+  res.json(successResponse(buckets, 'Đã sắp xếp lại nhóm'))
+})
+
 // ── TASKS ─────────────────────────────────────────────────────────────
 
 export const getTasks = asyncHandler(async (req: Request, res: Response) => {
@@ -285,6 +312,82 @@ export const deleteTask = asyncHandler(async (req: Request, res: Response) => {
   res.json(successResponse(null, 'Đã xóa nhiệm vụ'))
 })
 
+export const reorderTask = asyncHandler(async (req: Request, res: Response) => {
+  // body: { bucket_id: number|null, ordered_ids: number[] }
+  const id = parseInt(req.params.id)
+  const { bucket_id, ordered_ids } = req.body
+  if (!Array.isArray(ordered_ids)) throw new AppError(400, 'Thiếu ordered_ids')
+
+  const bucketIdVal = bucket_id !== undefined && bucket_id !== null ? parseInt(bucket_id) : null
+
+  // Cập nhật bucket cho task được kéo (nếu đổi cột)
+  await prisma.$executeRaw`
+    UPDATE tasks SET bucket_id=${bucketIdVal}, updated_at=NOW() WHERE id=${id}
+  `
+
+  // Cập nhật sort_order cho toàn bộ task trong cột đích theo thứ tự gửi lên
+  for (let i = 0; i < ordered_ids.length; i++) {
+    const taskId = parseInt(ordered_ids[i])
+    await prisma.$executeRaw`
+      UPDATE tasks SET sort_order=${i} WHERE id=${taskId}
+    `
+  }
+
+  const [task] = await prisma.$queryRaw<any[]>`
+    SELECT t.*, a.full_name AS assignee_name, a.avatar_url AS assignee_avatar
+    FROM tasks t LEFT JOIN users a ON a.id = t.assigned_to
+    WHERE t.id = ${id}
+  `
+  res.json(successResponse(task, 'Đã sắp xếp lại'))
+})
+
+export const copyTask = asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  const createdBy = req.user!.id
+
+  const existing = await prisma.$queryRaw<any[]>`SELECT * FROM tasks WHERE id=${id}`
+  if (!existing.length) throw new AppError(404, 'Nhiệm vụ không tồn tại')
+  const cur = existing[0]
+
+  const { plan_id, bucket_id } = req.body
+  const planIdInt   = plan_id   ? parseInt(plan_id)   : cur.plan_id
+  const bucketIdVal = bucket_id !== undefined ? (bucket_id ? parseInt(bucket_id) : null) : cur.bucket_id
+
+  let orderRows: any[]
+  if (bucketIdVal !== null) {
+    orderRows = await prisma.$queryRaw<any[]>`
+      SELECT COALESCE(MAX(sort_order), -1) AS mo FROM tasks WHERE plan_id=${planIdInt} AND bucket_id=${bucketIdVal}
+    `
+  } else {
+    orderRows = await prisma.$queryRaw<any[]>`
+      SELECT COALESCE(MAX(sort_order), -1) AS mo FROM tasks WHERE plan_id=${planIdInt} AND bucket_id IS NULL
+    `
+  }
+  const sortOrder = (orderRows[0]?.mo ?? -1) + 1
+
+  const [task] = await prisma.$queryRaw<any[]>`
+    INSERT INTO tasks
+      (title, description, plan_id, bucket_id, created_by, assigned_to, priority, due_date, start_date, status, sort_order, created_at, updated_at)
+    VALUES
+      (${cur.title + ' (Copy)'}, ${cur.description}, ${planIdInt}, ${bucketIdVal}, ${createdBy}, ${cur.assigned_to},
+       ${cur.priority}, ${cur.due_date}, ${cur.start_date}, 'not_started', ${sortOrder}, NOW(), NOW())
+    RETURNING *
+  `
+
+  // Sao chép checklist
+  const checklists = await prisma.$queryRaw<any[]>`
+    SELECT * FROM task_checklists WHERE task_id=${id} ORDER BY sort_order, id
+  `
+  for (const cl of checklists) {
+    await prisma.$executeRaw`
+      INSERT INTO task_checklists (task_id, title, is_done, sort_order)
+      VALUES (${task.id}, ${cl.title}, ${cl.is_done}, ${cl.sort_order})
+    `
+  }
+
+  res.status(201).json(successResponse(task, 'Đã sao chép nhiệm vụ'))
+})
+
 // ── CHECKLISTS ────────────────────────────────────────────────────────
 
 export const addChecklist = asyncHandler(async (req: Request, res: Response) => {
@@ -315,6 +418,21 @@ export const toggleChecklist = asyncHandler(async (req: Request, res: Response) 
   `
   const [item] = await prisma.$queryRaw<any[]>`SELECT * FROM task_checklists WHERE id=${itemId}`
   res.json(successResponse(item))
+})
+
+export const updateChecklist = asyncHandler(async (req: Request, res: Response) => {
+  const taskId = parseInt(req.params.taskId)
+  const itemId = parseInt(req.params.itemId)
+  const { title } = req.body
+  if (!title?.trim()) throw new AppError(400, 'Nội dung không được để trống')
+
+  const rows = await prisma.$queryRaw<any[]>`
+    UPDATE task_checklists SET title=${title.trim()}
+    WHERE id=${itemId} AND task_id=${taskId}
+    RETURNING *
+  `
+  if (!rows.length) throw new AppError(404, 'Mục không tồn tại')
+  res.json(successResponse(rows[0], 'Đã cập nhật'))
 })
 
 export const deleteChecklist = asyncHandler(async (req: Request, res: Response) => {
@@ -351,6 +469,65 @@ export const addComment = asyncHandler(async (req: Request, res: Response) => {
     RETURNING *
   `
   res.status(201).json(successResponse(comment, 'Đã thêm bình luận'))
+})
+
+export const deleteComment = asyncHandler(async (req: Request, res: Response) => {
+  const taskId    = parseInt(req.params.taskId)
+  const commentId = parseInt(req.params.commentId)
+
+  await prisma.$executeRaw`DELETE FROM task_comments WHERE id=${commentId} AND task_id=${taskId}`
+  res.json(successResponse(null, 'Đã xóa bình luận'))
+})
+
+// ── STATS (Chart view) ─────────────────────────────────────────────────
+
+export const getPlanStats = asyncHandler(async (req: Request, res: Response) => {
+  const planId = parseInt(req.params.planId)
+
+  const byStatus = await prisma.$queryRaw<any[]>`
+    SELECT status, COUNT(*)::int AS count
+    FROM tasks WHERE plan_id=${planId}
+    GROUP BY status
+  `
+
+  const byPriority = await prisma.$queryRaw<any[]>`
+    SELECT priority, COUNT(*)::int AS count
+    FROM tasks WHERE plan_id=${planId}
+    GROUP BY priority
+  `
+
+  const byBucket = await prisma.$queryRaw<any[]>`
+    SELECT b.id AS bucket_id, b.name AS bucket_name, COUNT(t.id)::int AS count
+    FROM buckets b
+    LEFT JOIN tasks t ON t.bucket_id = b.id
+    WHERE b.plan_id=${planId}
+    GROUP BY b.id, b.name
+    ORDER BY b.sort_order
+  `
+
+  const byAssignee = await prisma.$queryRaw<any[]>`
+    SELECT u.id AS user_id, u.full_name, u.avatar_url,
+      COUNT(t.id)::int AS total,
+      COUNT(CASE WHEN t.status='completed' THEN 1 END)::int AS completed
+    FROM tasks t
+    LEFT JOIN users u ON u.id = t.assigned_to
+    WHERE t.plan_id=${planId} AND t.assigned_to IS NOT NULL
+    GROUP BY u.id, u.full_name, u.avatar_url
+  `
+
+  const overdue = await prisma.$queryRaw<any[]>`
+    SELECT COUNT(*)::int AS count
+    FROM tasks
+    WHERE plan_id=${planId} AND due_date < NOW() AND status NOT IN ('completed','deferred')
+  `
+
+  res.json(successResponse({
+    by_status: byStatus,
+    by_priority: byPriority,
+    by_bucket: byBucket,
+    by_assignee: byAssignee,
+    overdue_count: overdue[0]?.count ?? 0,
+  }))
 })
 
 // ── USERS (for assignee picker) ───────────────────────────────────────
