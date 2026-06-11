@@ -195,6 +195,7 @@ model Pom {
   project_name    String
   customer_name   String?
   ward_id         Int?                          // UBND Phường/Xã liên kết (raw SQL table)
+  contact_id      Int?                          // Người liên hệ được chọn (raw SQL contacts table)
   status          PomStatus @default(draft)
   note            String?
   return_reason   String?

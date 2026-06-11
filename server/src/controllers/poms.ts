@@ -35,6 +35,21 @@ const POM_FULL_INCLUDE = {
   survey: true,
 }
 
+// ── Enrich pom(s) với contact info từ raw SQL contacts table ─
+async function enrichWithContact<T extends { contact_id?: number | null }>(
+  poms: T[]
+): Promise<(T & { contact?: { id: number; full_name: string; title: string; phone: string; phone_alt?: string | null; email?: string | null } | null })[]> {
+  const ids = [...new Set(poms.map(p => p.contact_id).filter(Boolean))] as number[]
+  if (!ids.length) return poms.map(p => ({ ...p, contact: null }))
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(',')
+  const contacts = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id, full_name, title, phone, phone_alt, email FROM contacts WHERE id IN (${placeholders}) AND is_active = TRUE`,
+    ...ids
+  )
+  const map = Object.fromEntries(contacts.map(c => [c.id, c]))
+  return poms.map(p => ({ ...p, contact: p.contact_id ? (map[p.contact_id] ?? null) : null }))
+}
+
 /** Ghi audit log — dùng trong transaction hoặc standalone */
 async function writeAuditLog(
   tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>,
@@ -104,7 +119,8 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
     prisma.pom.count({ where }),
   ])
 
-  res.json(successResponse({ data: poms, pagination: { page, limit, total, pages: Math.ceil(total / limit) } }))
+  const enriched = await enrichWithContact(poms as any[])
+  res.json(successResponse({ data: enriched, pagination: { page, limit, total, pages: Math.ceil(total / limit) } }))
 })
 
 // ── GET /poms/:id ──────────────────────────────────────────────
@@ -120,13 +136,14 @@ export const getPomById = asyncHandler(async (req: Request, res: Response) => {
       },
     },
   })
-  res.json(successResponse(pom))
+  const [enriched] = await enrichWithContact([pom as any])
+  res.json(successResponse(enriched))
 })
 
 // ── POST /poms ─────────────────────────────────────────────────
 
 export const createPom = asyncHandler(async (req: Request, res: Response) => {
-  const { solution_id, project_name, customer_name, note, ward_id } = req.body
+  const { solution_id, project_name, customer_name, note, ward_id, contact_id } = req.body
   const actorId = req.user!.id
 
   if (!project_name?.trim()) throw new AppError(400, 'project_name is required')
@@ -141,7 +158,8 @@ export const createPom = asyncHandler(async (req: Request, res: Response) => {
         customer_name: customer_name?.trim() ?? null,
         note: note?.trim() ?? null,
         status: 'draft',
-        ...(ward_id ? { ward_id: parseInt(ward_id) } : {}),
+        ...(ward_id    ? { ward_id:    parseInt(ward_id) }    : {}),
+        ...(contact_id ? { contact_id: parseInt(contact_id) } : {}),
       },
       include: POM_FULL_INCLUDE,
     })
