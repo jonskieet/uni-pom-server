@@ -536,3 +536,46 @@ export const getPlannerUsers = asyncHandler(async (req: Request, res: Response) 
   `
   res.json(successResponse(users))
 })
+// ── MY TASKS (tasks assigned to current user, across all plans) ───────
+
+export const getMyTasks = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id
+  const { status, priority } = req.query
+  const statusF   = (status   as string) || null
+  const priorityF = (priority as string) || null
+
+  const tasks = await prisma.$queryRaw<any[]>`
+    SELECT
+      t.*,
+      p.name                                                        AS plan_name,
+      b.name                                                        AS bucket_name,
+      c.full_name                                                   AS creator_name,
+      c.avatar_url                                                  AS creator_avatar,
+      c.role                                                        AS creator_role,
+      COUNT(DISTINCT cl.id)::int                                    AS check_total,
+      COUNT(DISTINCT CASE WHEN cl.is_done THEN cl.id END)::int      AS check_done,
+      COUNT(DISTINCT cm.id)::int                                    AS comment_count
+    FROM tasks t
+    LEFT JOIN plans   p  ON p.id = t.plan_id
+    LEFT JOIN buckets b  ON b.id = t.bucket_id
+    LEFT JOIN users   c  ON c.id = t.created_by
+    LEFT JOIN task_checklists cl ON cl.task_id = t.id
+    LEFT JOIN task_comments   cm ON cm.task_id = t.id
+    WHERE t.assigned_to = ${userId}
+      AND p.is_active = true
+      AND (${statusF}::text   IS NULL OR t.status   = ${statusF}::text)
+      AND (${priorityF}::text IS NULL OR t.priority = ${priorityF}::text)
+    GROUP BY t.id, p.name, b.name, c.full_name, c.avatar_url, c.role
+    ORDER BY
+      CASE t.status
+        WHEN 'in_progress' THEN 0
+        WHEN 'not_started' THEN 1
+        WHEN 'deferred'    THEN 2
+        WHEN 'completed'   THEN 3
+        ELSE 4
+      END,
+      t.due_date ASC NULLS LAST,
+      t.created_at DESC
+  `
+  res.json(successResponse(tasks))
+})

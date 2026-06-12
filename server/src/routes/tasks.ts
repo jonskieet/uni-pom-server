@@ -13,6 +13,7 @@ import {
   getComments, addComment, deleteComment,
   getPlannerUsers,
   getPlanStats,
+  getMyTasks,
 } from '../controllers/tasks'
 
 const router = Router()
@@ -53,6 +54,9 @@ router.delete('/tasks/:taskId/comments/:commentId', anyRole, deleteComment) // �
 
 // ── Stats (Chart view) ─────────────────────────────────────
 router.get('/plans/:planId/stats', getPlanStats)  // ← MỚI
+
+// ── My Tasks (tasks assigned to current user) ──────────────
+router.get('/my-tasks', getMyTasks)
 
 // ── Users picker ───────────────────────────────────────────
 router.get('/users', getPlannerUsers)
