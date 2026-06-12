@@ -496,37 +496,32 @@ export const getPlanStats = asyncHandler(async (req: Request, res: Response) => 
     GROUP BY priority
   `
 
-  const byBucket = await prisma.$queryRaw<any[]>`
-    SELECT b.id AS bucket_id, b.name AS bucket_name, COUNT(t.id)::int AS count
-    FROM buckets b
-    LEFT JOIN tasks t ON t.bucket_id = b.id
-    WHERE b.plan_id=${planId}
-    GROUP BY b.id, b.name
-    ORDER BY b.sort_order
-  `
-
   const byAssignee = await prisma.$queryRaw<any[]>`
     SELECT u.id AS user_id, u.full_name, u.avatar_url,
-      COUNT(t.id)::int AS total,
+      COUNT(t.id)::int AS count,
       COUNT(CASE WHEN t.status='completed' THEN 1 END)::int AS completed
     FROM tasks t
     LEFT JOIN users u ON u.id = t.assigned_to
     WHERE t.plan_id=${planId} AND t.assigned_to IS NOT NULL
     GROUP BY u.id, u.full_name, u.avatar_url
+    ORDER BY count DESC
   `
 
-  const overdue = await prisma.$queryRaw<any[]>`
-    SELECT COUNT(*)::int AS count
+  const dueRows = await prisma.$queryRaw<any[]>`
+    SELECT
+      COUNT(CASE WHEN due_date IS NOT NULL AND due_date < NOW() AND status NOT IN ('completed','deferred') THEN 1 END)::int AS overdue,
+      COUNT(CASE WHEN due_date IS NOT NULL AND due_date >= NOW() AND due_date < NOW() + INTERVAL '3 days' AND status NOT IN ('completed','deferred') THEN 1 END)::int AS due_soon,
+      COUNT(CASE WHEN due_date IS NOT NULL AND due_date >= NOW() + INTERVAL '3 days' AND status NOT IN ('completed','deferred') THEN 1 END)::int AS on_track,
+      COUNT(CASE WHEN due_date IS NULL THEN 1 END)::int AS no_due
     FROM tasks
-    WHERE plan_id=${planId} AND due_date < NOW() AND status NOT IN ('completed','deferred')
+    WHERE plan_id=${planId}
   `
 
   res.json(successResponse({
-    by_status: byStatus,
-    by_priority: byPriority,
-    by_bucket: byBucket,
-    by_assignee: byAssignee,
-    overdue_count: overdue[0]?.count ?? 0,
+    byStatus,
+    byPriority,
+    byAssignee,
+    byDue: dueRows[0] || { overdue: 0, due_soon: 0, on_track: 0, no_due: 0 },
   }))
 })
 

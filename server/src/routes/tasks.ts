@@ -27,9 +27,9 @@ router.delete('/plans/:id', anyRole, deletePlan)
 // ── Buckets ────────────────────────────────────────────────
 router.get('/plans/:planId/buckets',   getBuckets)
 router.post('/plans/:planId/buckets',  anyRole, createBucket)
+router.put('/buckets/reorder',         anyRole, reorderBuckets)   // ← MỚI (đặt trước :id)
 router.put('/buckets/:id',             anyRole, updateBucket)
 router.delete('/buckets/:id',          anyRole, deleteBucket)
-router.put('/buckets/reorder',         anyRole, reorderBuckets)   // ← MỚI
 
 // ── Tasks ──────────────────────────────────────────────────
 router.get('/tasks',          getTasks)
