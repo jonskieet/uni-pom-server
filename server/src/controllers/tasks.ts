@@ -412,12 +412,49 @@ export const toggleChecklist = asyncHandler(async (req: Request, res: Response) 
   const taskId = parseInt(req.params.taskId)
   const itemId = parseInt(req.params.itemId)
 
+  // Toggle item
   await prisma.$executeRaw`
     UPDATE task_checklists SET is_done = NOT is_done
     WHERE id=${itemId} AND task_id=${taskId}
   `
   const [item] = await prisma.$queryRaw<any[]>`SELECT * FROM task_checklists WHERE id=${itemId}`
-  res.json(successResponse(item))
+
+  // ── Auto-update task status based on checklist state ────────────────
+  const [taskRow] = await prisma.$queryRaw<any[]>`SELECT status FROM tasks WHERE id=${taskId}`
+  const allItems  = await prisma.$queryRaw<any[]>`SELECT is_done FROM task_checklists WHERE task_id=${taskId}`
+
+  if (taskRow && allItems.length > 0) {
+    const total    = allItems.length
+    const doneCount = allItems.filter((r: any) => r.is_done).length
+    const curStatus = taskRow.status as string
+
+    let newStatus: string | null = null
+
+    if (doneCount === total) {
+      // All items ticked → completed
+      newStatus = 'completed'
+    } else if (doneCount > 0 && curStatus === 'not_started') {
+      // First tick on a not-started task → in_progress
+      newStatus = 'in_progress'
+    } else if (doneCount === 0 && curStatus === 'in_progress') {
+      // All unticked on an auto-started task → back to not_started
+      newStatus = 'not_started'
+    } else if (doneCount < total && curStatus === 'completed') {
+      // Un-ticking a completed task → back to in_progress
+      newStatus = 'in_progress'
+    }
+
+    if (newStatus) {
+      await prisma.$executeRaw`
+        UPDATE tasks SET status=${newStatus}, updated_at=NOW()
+        WHERE id=${taskId}
+      `
+    }
+  }
+
+  // Return item + new task status so the client can update UI
+  const [updatedTask] = await prisma.$queryRaw<any[]>`SELECT status FROM tasks WHERE id=${taskId}`
+  res.json(successResponse({ ...item, task_status: updatedTask?.status ?? null }))
 })
 
 export const updateChecklist = asyncHandler(async (req: Request, res: Response) => {
