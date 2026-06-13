@@ -175,13 +175,23 @@ export const getTasks = asyncHandler(async (req: Request, res: Response) => {
       a.role        AS assignee_role,
       c.full_name   AS creator_name,
       COUNT(DISTINCT cl.id)::int                              AS check_total,
-      COUNT(DISTINCT CASE WHEN cl.is_done THEN cl.id END)::int AS check_done
+      COUNT(DISTINCT CASE WHEN cl.is_done THEN cl.id END)::int AS check_done,
+      COALESCE(
+        json_agg(DISTINCT jsonb_build_object(
+          'id', au.id, 'full_name', au.full_name, 'avatar_url', au.avatar_url, 'role', au.role
+        )) FILTER (WHERE au.id IS NOT NULL),
+        '[]'
+      ) AS assignees
     FROM tasks t
     LEFT JOIN users a  ON a.id = t.assigned_to
     LEFT JOIN users c  ON c.id = t.created_by
     LEFT JOIN task_checklists cl ON cl.task_id = t.id
+    LEFT JOIN task_assignees ta ON ta.task_id = t.id
+    LEFT JOIN users au ON au.id = ta.user_id
     WHERE t.plan_id = ${planId}
-      AND (${assignedToF}::int    IS NULL OR t.assigned_to = ${assignedToF}::int)
+      AND (${assignedToF}::int    IS NULL OR EXISTS (
+            SELECT 1 FROM task_assignees x WHERE x.task_id = t.id AND x.user_id = ${assignedToF}::int
+          ))
       AND (${statusF}::text       IS NULL OR t.status      = ${statusF}::text)
       AND (${priorityF}::text     IS NULL OR t.priority    = ${priorityF}::text)
     GROUP BY t.id, a.full_name, a.avatar_url, a.role, c.full_name
@@ -216,8 +226,15 @@ export const getTask = asyncHandler(async (req: Request, res: Response) => {
     WHERE cm.task_id=${id}
     ORDER BY cm.created_at ASC
   `
+  const assignees = await prisma.$queryRaw<any[]>`
+    SELECT u.id, u.full_name, u.avatar_url, u.role
+    FROM task_assignees ta
+    JOIN users u ON u.id = ta.user_id
+    WHERE ta.task_id=${id}
+    ORDER BY u.full_name
+  `
 
-  res.json(successResponse({ ...rows[0], checklists, comments }))
+  res.json(successResponse({ ...rows[0], checklists, comments, assignees }))
 })
 
 export const createTask = asyncHandler(async (req: Request, res: Response) => {
@@ -229,11 +246,16 @@ export const createTask = asyncHandler(async (req: Request, res: Response) => {
 
   const planIdInt    = parseInt(plan_id)
   const bucketIdVal  = bucket_id   ? parseInt(bucket_id)   : null
-  const assigneeVal  = assigned_to ? parseInt(assigned_to) : null
   const dueDateVal   = due_date    || null
   const startDateVal = start_date  || null
   const statusVal    = status      || 'not_started'
   const priorityVal  = priority    || 'medium'
+
+  // assigned_to: có thể là 1 giá trị hoặc 1 mảng (giao cho nhiều người)
+  const assigneeIds: number[] = Array.isArray(assigned_to)
+    ? assigned_to.map((v: any) => parseInt(v)).filter((v: number) => !isNaN(v))
+    : assigned_to ? [parseInt(assigned_to)] : []
+  const primaryAssignee = assigneeIds.length ? assigneeIds[0] : null
 
   // Tính sort_order tiếp theo trong bucket
   let orderRows: any[]
@@ -252,11 +274,18 @@ export const createTask = asyncHandler(async (req: Request, res: Response) => {
     INSERT INTO tasks
       (title, description, plan_id, bucket_id, created_by, assigned_to, priority, due_date, start_date, status, sort_order, created_at, updated_at)
     VALUES
-      (${title.trim()}, ${description || null}, ${planIdInt}, ${bucketIdVal}, ${createdBy}, ${assigneeVal},
+      (${title.trim()}, ${description || null}, ${planIdInt}, ${bucketIdVal}, ${createdBy}, ${primaryAssignee},
        ${priorityVal}, ${dueDateVal ? new Date(dueDateVal) : null}, ${startDateVal ? new Date(startDateVal) : null},
        ${statusVal}, ${sortOrder}, NOW(), NOW())
     RETURNING *
   `
+
+  for (const uid of assigneeIds) {
+    await prisma.$executeRaw`
+      INSERT INTO task_assignees (task_id, user_id) VALUES (${task.id}, ${uid})
+      ON CONFLICT DO NOTHING
+    `
+  }
 
   res.status(201).json(successResponse(task, 'Đã tạo nhiệm vụ'))
 })
@@ -274,7 +303,6 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
   const title       = 'title'       in changes ? (changes.title?.trim() || cur.title) : cur.title
   const description = 'description' in changes ? (changes.description ?? null)        : cur.description
   const bucketId    = 'bucket_id'   in changes ? (changes.bucket_id ? parseInt(changes.bucket_id) : null) : cur.bucket_id
-  const assignedTo  = 'assigned_to' in changes ? (changes.assigned_to ? parseInt(changes.assigned_to) : null) : cur.assigned_to
   const priority    = 'priority'    in changes ? changes.priority  : cur.priority
   const status      = 'status'      in changes ? changes.status    : cur.status
   const dueDate     = 'due_date'    in changes ? (changes.due_date ? new Date(changes.due_date) : null) : cur.due_date
@@ -282,6 +310,18 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
   const completedAt = status === 'completed' && cur.status !== 'completed'
     ? new Date()
     : (status !== 'completed' ? null : cur.completed_at)
+
+  // ── Xử lý người được giao (hỗ trợ nhiều người) ─────────────────────
+  let assigneeIds: number[] | null = null
+  if ('assigned_to' in changes) {
+    const val = changes.assigned_to
+    assigneeIds = Array.isArray(val)
+      ? val.map((v: any) => parseInt(v)).filter((v: number) => !isNaN(v))
+      : (val ? [parseInt(val)] : [])
+  }
+  const assignedTo = assigneeIds !== null
+    ? (assigneeIds.length ? assigneeIds[0] : null)
+    : cur.assigned_to
 
   await prisma.$executeRaw`
     UPDATE tasks SET
@@ -298,12 +338,49 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
     WHERE id = ${id}
   `
 
+  if (assigneeIds !== null) {
+    await prisma.$executeRaw`DELETE FROM task_assignees WHERE task_id=${id}`
+    for (const uid of assigneeIds) {
+      await prisma.$executeRaw`
+        INSERT INTO task_assignees (task_id, user_id) VALUES (${id}, ${uid})
+        ON CONFLICT DO NOTHING
+      `
+    }
+  }
+
+  // ── Đồng bộ checklist theo trạng thái mới ───────────────────────────
+  // - "Chưa bắt đầu": bỏ tick toàn bộ checklist
+  // - "Hoàn thành": tick toàn bộ checklist
+  if ('status' in changes && status !== cur.status) {
+    if (status === 'not_started') {
+      await prisma.$executeRaw`UPDATE task_checklists SET is_done=false WHERE task_id=${id}`
+    } else if (status === 'completed') {
+      await prisma.$executeRaw`UPDATE task_checklists SET is_done=true WHERE task_id=${id}`
+    }
+  }
+
   const [updated] = await prisma.$queryRaw<any[]>`
     SELECT t.*, a.full_name AS assignee_name, a.avatar_url AS assignee_avatar
     FROM tasks t LEFT JOIN users a ON a.id = t.assigned_to
     WHERE t.id = ${id}
   `
-  res.json(successResponse(updated, 'Đã cập nhật'))
+  const checklists = await prisma.$queryRaw<any[]>`
+    SELECT * FROM task_checklists WHERE task_id=${id} ORDER BY sort_order, id
+  `
+  const assignees = await prisma.$queryRaw<any[]>`
+    SELECT u.id, u.full_name, u.avatar_url, u.role
+    FROM task_assignees ta
+    JOIN users u ON u.id = ta.user_id
+    WHERE ta.task_id=${id}
+    ORDER BY u.full_name
+  `
+  res.json(successResponse({
+    ...updated,
+    checklists,
+    assignees,
+    check_total: checklists.length,
+    check_done: checklists.filter((c: any) => c.is_done).length,
+  }, 'Đã cập nhật'))
 })
 
 export const deleteTask = asyncHandler(async (req: Request, res: Response) => {
@@ -382,6 +459,17 @@ export const copyTask = asyncHandler(async (req: Request, res: Response) => {
     await prisma.$executeRaw`
       INSERT INTO task_checklists (task_id, title, is_done, sort_order)
       VALUES (${task.id}, ${cl.title}, ${cl.is_done}, ${cl.sort_order})
+    `
+  }
+
+  // Sao chép người được giao
+  const assignees = await prisma.$queryRaw<any[]>`
+    SELECT user_id FROM task_assignees WHERE task_id=${id}
+  `
+  for (const a of assignees) {
+    await prisma.$executeRaw`
+      INSERT INTO task_assignees (task_id, user_id) VALUES (${task.id}, ${a.user_id})
+      ON CONFLICT DO NOTHING
     `
   }
 
@@ -537,9 +625,10 @@ export const getPlanStats = asyncHandler(async (req: Request, res: Response) => 
     SELECT u.id AS user_id, u.full_name, u.avatar_url,
       COUNT(t.id)::int AS count,
       COUNT(CASE WHEN t.status='completed' THEN 1 END)::int AS completed
-    FROM tasks t
-    LEFT JOIN users u ON u.id = t.assigned_to
-    WHERE t.plan_id=${planId} AND t.assigned_to IS NOT NULL
+    FROM task_assignees ta
+    JOIN users u ON u.id = ta.user_id
+    JOIN tasks t ON t.id = ta.task_id
+    WHERE t.plan_id=${planId}
     GROUP BY u.id, u.full_name, u.avatar_url
     ORDER BY count DESC
   `
@@ -593,13 +682,13 @@ export const getMyTasks = asyncHandler(async (req: Request, res: Response) => {
       COUNT(DISTINCT CASE WHEN cl.is_done THEN cl.id END)::int      AS check_done,
       COUNT(DISTINCT cm.id)::int                                    AS comment_count
     FROM tasks t
+    JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ${userId}
     LEFT JOIN plans   p  ON p.id = t.plan_id
     LEFT JOIN buckets b  ON b.id = t.bucket_id
     LEFT JOIN users   c  ON c.id = t.created_by
     LEFT JOIN task_checklists cl ON cl.task_id = t.id
     LEFT JOIN task_comments   cm ON cm.task_id = t.id
-    WHERE t.assigned_to = ${userId}
-      AND p.is_active = true
+    WHERE p.is_active = true
       AND (${statusF}::text   IS NULL OR t.status   = ${statusF}::text)
       AND (${priorityF}::text IS NULL OR t.priority = ${priorityF}::text)
     GROUP BY t.id, p.name, b.name, c.full_name, c.avatar_url, c.role
