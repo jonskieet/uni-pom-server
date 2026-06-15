@@ -383,6 +383,7 @@ export const pricePom = asyncHandler(async (req: Request, res: Response) => {
         status: 'pricing_done',
         sale_admin_id: actorId,
         assigned_sale_id: parseInt(assigned_sale_id),
+        return_reason: null,
       },
       include: POM_FULL_INCLUDE,
     })
@@ -506,6 +507,7 @@ export const returnToPrice = asyncHandler(async (req: Request, res: Response) =>
       data: {
         status: 'revision_price',
         revision_count: { increment: 1 },
+        return_reason: reason.trim(),
       },
       include: POM_FULL_INCLUDE,
     })
