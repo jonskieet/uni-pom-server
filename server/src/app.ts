@@ -21,6 +21,8 @@ import settingsRoutes from './routes/settings'
 import wardsRoutes from './routes/wards'
 import notificationsRoutes from './routes/notifications'
 import plannerRoutes from './routes/tasks'
+import attendanceRoutes from './routes/attendance'
+import businessTripRoutes from './routes/businessTrip'
 
 export function createApp(): Express {
   const app = express()
@@ -66,6 +68,8 @@ export function createApp(): Express {
   app.use('/api', wardsRoutes)
   app.use('/api/notifications', notificationsRoutes)
   app.use('/api/planner', plannerRoutes)
+  app.use('/api/attendance', attendanceRoutes)
+  app.use('/api/business-trips', businessTripRoutes)
   // ============================================================
   // ERROR HANDLING
   // ============================================================

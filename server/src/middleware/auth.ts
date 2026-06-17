@@ -29,8 +29,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   next()
 }
 
-// Helper dùng nội bộ
-function checkRoles(allowed: string[]) {
+// Helper dùng nội bộ — cũng export để routes có thể tự tạo role guard
+export function checkRoles(allowed: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json(errorResponse('Unauthorized'))
