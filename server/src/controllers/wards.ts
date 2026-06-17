@@ -194,6 +194,7 @@ export const getWardSummary = asyncHandler(async (_req: Request, res: Response) 
 export const getContacts = asyncHandler(async (req: Request, res: Response) => {
   const {
     ward_id, province_id, district_id, search,
+    assigned_sale_id,   // ← THÊM: lọc theo sale phụ trách UBND
     page = '1', limit = '50'
   } = req.query
 
@@ -203,9 +204,10 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
   const conditions: string[] = ['c.is_active = TRUE']
   const params: any[] = []
 
-  if (ward_id)     { params.push(parseInt(ward_id as string));     conditions.push(`c.ward_id = $${params.length}`) }
-  if (province_id) { params.push(parseInt(province_id as string)); conditions.push(`d.province_id = $${params.length}`) }
-  if (district_id) { params.push(parseInt(district_id as string)); conditions.push(`w.district_id = $${params.length}`) }
+  if (ward_id)          { params.push(parseInt(ward_id as string));          conditions.push(`c.ward_id = $${params.length}`) }
+  if (province_id)      { params.push(parseInt(province_id as string));      conditions.push(`d.province_id = $${params.length}`) }
+  if (district_id)      { params.push(parseInt(district_id as string));      conditions.push(`w.district_id = $${params.length}`) }
+  if (assigned_sale_id) { params.push(parseInt(assigned_sale_id as string)); conditions.push(`w.assigned_sale_id = $${params.length}`) }
   if (search) {
     params.push(`%${search}%`)
     conditions.push(`(c.full_name ILIKE $${params.length} OR c.phone ILIKE $${params.length} OR c.title ILIKE $${params.length} OR w.full_name ILIKE $${params.length} OR w.name ILIKE $${params.length})`)
@@ -217,6 +219,7 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
     LEFT JOIN wards w     ON w.id = c.ward_id
     LEFT JOIN districts d ON d.id = w.district_id
     LEFT JOIN provinces p ON p.id = d.province_id
+    LEFT JOIN users u     ON u.id = w.assigned_sale_id
   `
 
   params.push(lim);  const limitIdx = params.length
@@ -226,8 +229,10 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
     SELECT c.*,
            w.name AS ward_name, w.full_name AS ward_full_name,
            w.relationship_status AS ward_relationship_status,
+           w.assigned_sale_id,
+           u.full_name AS assigned_sale_name,
            d.name AS district_name,
-           p.name AS province_name
+           p.name AS province_name, p.short_name AS province_short
     ${baseFrom} ${where}
     ORDER BY c.is_primary DESC, c.full_name
     LIMIT $${limitIdx} OFFSET $${skipIdx}
