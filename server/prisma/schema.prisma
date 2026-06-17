@@ -44,8 +44,10 @@ model User {
   saleAdminPoms     Pom[]    @relation("PricedBySaleAdmin") // Sale Admin định giá
   auditLogs         AuditLog[]
   notifications     Notification[]
-  attendances       Attendance[]
-  businessTrips     BusinessTrip[]
+
+  // Relations chấm công & công tác
+  attendances   Attendance[]
+  businessTrips BusinessTrip[]
 
   @@index([username])
   @@index([role])
@@ -412,110 +414,86 @@ model Notification {
 }
 
 // ============================================================
+// THÊM VÀO CUỐI FILE schema.prisma HIỆN TẠI
+// ============================================================
+
+// 1. Trong model User, thêm 2 relations này:
+//
+//   attendances   Attendance[]
+//   businessTrips BusinessTrip[]
+
+// ============================================================
 // ATTENDANCE — Chấm công
 // ============================================================
 model Attendance {
-  id           Int      @id @default(autoincrement())
-  user_id      Int
-  date         DateTime @db.Date
-  check_in     DateTime?
-  check_out    DateTime?
-  status       AttendanceStatus @default(present)
-  note         String?
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  id         Int       @id @default(autoincrement())
+  user_id    Int
+  date       DateTime  @db.Date
+  check_in   DateTime?
+  check_out  DateTime?
+  note       String?
+  status     String    @default("present") // present | late | absent | leave
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
 
-  user         User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, date])
-  @@index([user_id])
   @@index([date])
-  @@map("attendances")
-}
-
-enum AttendanceStatus {
-  present    // Có mặt
-  absent     // Vắng mặt
-  late       // Đi trễ
-  half_day   // Nửa ngày
+  @@index([user_id])
+  @@map("attendance")
 }
 
 // ============================================================
-// BUSINESS TRIP — Công tác phí
+// BUSINESS TRIPS — Báo cáo chi phí công tác (header)
 // ============================================================
 model BusinessTrip {
-  id               Int       @id @default(autoincrement())
-  user_id          Int
-  trip_code        String    @unique
-  title            String
-  destination      String
-  province         String?
-  start_date       DateTime  @db.Date
-  end_date         DateTime  @db.Date
-  total_days       Int       @default(1)
-  subsidy_per_day  Decimal   @default(150000)
-  total_subsidy    Decimal   @default(0)
-  total_expense    Decimal   @default(0)
-  advance_amount   Decimal   @default(0)
-  status           TripStatus @default(draft)
-  note             String?
-  created_at       DateTime  @default(now())
-  updated_at       DateTime  @updatedAt
+  id              Int      @id @default(autoincrement())
+  user_id         Int
+  report_date     DateTime @db.Date
+  time_period     String?                  // "08/06-11/06/2026"
+  advance_amount  Decimal  @default(0)     // Tạm ứng
+  total_amount    Decimal  @default(0)     // Tổng chi phí
+  return_amount   Decimal  @default(0)     // Hoàn tạm ứng = Tạm ứng - Tổng chi
+  status          String   @default("pending") // pending | approved | rejected
+  note            String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
 
-  user             User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  expenses         TripExpense[]
+  user  User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  items BusinessTripItem[]
 
   @@index([user_id])
-  @@index([start_date])
+  @@index([report_date])
   @@index([status])
   @@map("business_trips")
 }
 
-enum TripStatus {
-  draft      // Đang soạn
-  submitted  // Đã nộp, chờ kế toán xét
-  approved   // Kế toán đã duyệt
-  rejected   // Kế toán từ chối
-}
-
 // ============================================================
-// TRIP EXPENSES — Chi tiết chi phí trong chuyến công tác
+// BUSINESS TRIP ITEMS — Chi tiết từng dòng chi phí
 // ============================================================
-model TripExpense {
-  id           Int      @id @default(autoincrement())
-  trip_id      Int
-  expense_date DateTime @db.Date
-  ward_name    String?
-  province     String?
-  content      String
-  location     String?
-  description  String
-  note         String?
-  has_invoice  Boolean  @default(false)
-  department   String?
-  unit         String   @default("Ngày")
-  quantity     Decimal  @default(1)
-  unit_price   Decimal
-  total        Decimal
-  sort_order   Int      @default(0)
+model BusinessTripItem {
+  id          Int      @id @default(autoincrement())
+  trip_id     Int
+  date        DateTime? @db.Date
+  ward        String?   // Xã/Phường/Sở
+  province    String?   // Tỉnh
+  content     String?   // Nội dung công tác
+  location    String?   // Địa điểm
+  description String?   // Diễn giải
+  note        String?   // Ghi chú
+  has_invoice Boolean   @default(false)
+  sale_person String?   // Kinh doanh
+  tech_person String?   // Kỹ thuật
+  unit        String    @default("Ngày")
+  quantity    Decimal   @default(1)
+  unit_price  Decimal   @default(0)
+  total_price Decimal   @default(0)
+  sort_order  Int       @default(0)
 
-  trip         BusinessTrip @relation(fields: [trip_id], references: [id], onDelete: Cascade)
+  trip BusinessTrip @relation(fields: [trip_id], references: [id], onDelete: Cascade)
 
   @@index([trip_id])
-  @@map("trip_expenses")
+  @@map("business_trip_items")
 }
 
-// ============================================================
-// APP CONFIGS — Cài đặt riêng cho module công tác phí (key=value đơn giản)
-// LƯU Ý: bảng "system_settings" đã được dùng (raw SQL) để lưu roles/modules
-// nên ta dùng bảng riêng "app_configs" để tránh xung đột.
-// ============================================================
-model AppConfig {
-  id         Int      @id @default(autoincrement())
-  key        String   @unique
-  value      String
-  label      String?
-  updated_at DateTime @updatedAt
-
-  @@map("app_configs")
-}

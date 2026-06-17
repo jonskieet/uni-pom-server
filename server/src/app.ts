@@ -1,5 +1,5 @@
 // ============================================================
-// src/app.ts — Express application setup
+// src/app.ts — v3 (thêm attendance + businessTrips routes)
 // ============================================================
 
 import express, { Express, Request, Response } from 'express'
@@ -21,15 +21,12 @@ import settingsRoutes from './routes/settings'
 import wardsRoutes from './routes/wards'
 import notificationsRoutes from './routes/notifications'
 import plannerRoutes from './routes/tasks'
-import attendanceRoutes from './routes/attendance'
-import businessTripRoutes from './routes/businessTrip'
+import attendanceRoutes from './routes/attendance'       // ← MỚI
+import businessTripsRoutes from './routes/businessTrips' // ← MỚI
 
 export function createApp(): Express {
   const app = express()
 
-  // ============================================================
-  // MIDDLEWARE
-  // ============================================================
   app.use(helmet())
   app.use(
     cors({
@@ -40,42 +37,31 @@ export function createApp(): Express {
   app.use(express.json())
   app.use(express.urlencoded({ extended: true }))
 
-  // ============================================================
-  // HEALTH CHECK
-  // ============================================================
-  app.get('/health', (req: Request, res: Response) => {
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString()
-    })
+  app.get('/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() })
   })
 
-  // ============================================================
-  // API ROUTES
-  // ============================================================
-  app.use('/api/auth', authRoutes)
-  app.use('/api/users', usersRoutes)
-  app.use('/api/products', productsRoutes)
-  app.use('/api/poms', pomsRoutes)
-  app.use('/api/surveys', surveysRoutes)
-  app.use('/api/brands', brandsRoutes)
-  app.use('/api/categories', categoriesRoutes)
-  app.use('/api/solutions', solutionsRoutes)
+  // ── Routes ─────────────────────────────────────────────────
+  app.use('/api/auth',           authRoutes)
+  app.use('/api/users',          usersRoutes)
+  app.use('/api/products',       productsRoutes)
+  app.use('/api/poms',           pomsRoutes)
+  app.use('/api/surveys',        surveysRoutes)
+  app.use('/api/brands',         brandsRoutes)
+  app.use('/api/categories',     categoriesRoutes)
+  app.use('/api/solutions',      solutionsRoutes)
   app.use('/api/form-templates', formTemplatesRoutes)
-  app.use('/api/admin', adminRoutes)
-  app.use('/api/settings', settingsRoutes)
-  app.use('/api/upload', uploadRoutes)   // ← FIX: đăng ký upload route
-  app.use('/api', wardsRoutes)
-  app.use('/api/notifications', notificationsRoutes)
-  app.use('/api/planner', plannerRoutes)
-  app.use('/api/attendance', attendanceRoutes)
-  app.use('/api/business-trips', businessTripRoutes)
-  // ============================================================
-  // ERROR HANDLING
-  // ============================================================
+  app.use('/api/admin',          adminRoutes)
+  app.use('/api/settings',       settingsRoutes)
+  app.use('/api/upload',         uploadRoutes)
+  app.use('/api',                wardsRoutes)
+  app.use('/api/notifications',  notificationsRoutes)
+  app.use('/api/planner',        plannerRoutes)
+  app.use('/api/attendance',     attendanceRoutes)       // ← MỚI
+  app.use('/api/business-trips', businessTripsRoutes)    // ← MỚI
+
   app.use(notFoundHandler)
   app.use(errorHandler)
-
 
   return app
 }
