@@ -44,6 +44,8 @@ model User {
   saleAdminPoms     Pom[]    @relation("PricedBySaleAdmin") // Sale Admin định giá
   auditLogs         AuditLog[]
   notifications     Notification[]
+  attendances       Attendance[]
+  businessTrips     BusinessTrip[]
 
   @@index([username])
   @@index([role])
@@ -407,4 +409,113 @@ model Notification {
   @@index([pom_id])
   @@index([created_at])
   @@map("notifications")
+}
+
+// ============================================================
+// ATTENDANCE — Chấm công
+// ============================================================
+model Attendance {
+  id           Int      @id @default(autoincrement())
+  user_id      Int
+  date         DateTime @db.Date
+  check_in     DateTime?
+  check_out    DateTime?
+  status       AttendanceStatus @default(present)
+  note         String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  user         User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, date])
+  @@index([user_id])
+  @@index([date])
+  @@map("attendances")
+}
+
+enum AttendanceStatus {
+  present    // Có mặt
+  absent     // Vắng mặt
+  late       // Đi trễ
+  half_day   // Nửa ngày
+}
+
+// ============================================================
+// BUSINESS TRIP — Công tác phí
+// ============================================================
+model BusinessTrip {
+  id               Int       @id @default(autoincrement())
+  user_id          Int
+  trip_code        String    @unique
+  title            String
+  destination      String
+  province         String?
+  start_date       DateTime  @db.Date
+  end_date         DateTime  @db.Date
+  total_days       Int       @default(1)
+  subsidy_per_day  Decimal   @default(150000)
+  total_subsidy    Decimal   @default(0)
+  total_expense    Decimal   @default(0)
+  advance_amount   Decimal   @default(0)
+  status           TripStatus @default(draft)
+  note             String?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  user             User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  expenses         TripExpense[]
+
+  @@index([user_id])
+  @@index([start_date])
+  @@index([status])
+  @@map("business_trips")
+}
+
+enum TripStatus {
+  draft      // Đang soạn
+  submitted  // Đã nộp, chờ kế toán xét
+  approved   // Kế toán đã duyệt
+  rejected   // Kế toán từ chối
+}
+
+// ============================================================
+// TRIP EXPENSES — Chi tiết chi phí trong chuyến công tác
+// ============================================================
+model TripExpense {
+  id           Int      @id @default(autoincrement())
+  trip_id      Int
+  expense_date DateTime @db.Date
+  ward_name    String?
+  province     String?
+  content      String
+  location     String?
+  description  String
+  note         String?
+  has_invoice  Boolean  @default(false)
+  department   String?
+  unit         String   @default("Ngày")
+  quantity     Decimal  @default(1)
+  unit_price   Decimal
+  total        Decimal
+  sort_order   Int      @default(0)
+
+  trip         BusinessTrip @relation(fields: [trip_id], references: [id], onDelete: Cascade)
+
+  @@index([trip_id])
+  @@map("trip_expenses")
+}
+
+// ============================================================
+// APP CONFIGS — Cài đặt riêng cho module công tác phí (key=value đơn giản)
+// LƯU Ý: bảng "system_settings" đã được dùng (raw SQL) để lưu roles/modules
+// nên ta dùng bảng riêng "app_configs" để tránh xung đột.
+// ============================================================
+model AppConfig {
+  id         Int      @id @default(autoincrement())
+  key        String   @unique
+  value      String
+  label      String?
+  updated_at DateTime @updatedAt
+
+  @@map("app_configs")
 }
