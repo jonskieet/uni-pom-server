@@ -1,33 +1,305 @@
-// src/routes/businessTrips.ts
-import { Router } from 'express'
-import { authMiddleware, keToansAndAdmin, tripCreators, anyRole } from '../middleware/auth'
-import {
-  getAllowance, setAllowance,
-  getMyTrips, getAllTrips, getTripById,
-  createTrip, updateTrip, deleteTrip,
-  approveTrip, rejectTrip,
-} from '../controllers/businessTrips'
+// ============================================================
+// src/controllers/businessTrips.ts — Chi phí công tác
+// Roles tạo/xem của mình: mọi role trừ admin, ke_toan, sales_admin
+// Roles quản lý: ke_toan, admin
+// ============================================================
 
-const router = Router()
+import { Request, Response } from 'express'
+import { PrismaClient } from '@prisma/client'
+import { successResponse } from '../utils/response'
+import { AppError, asyncHandler } from '../middleware/errorHandler'
 
-router.use(authMiddleware)
+const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
+if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
+const prisma = globalForPrisma._prisma
 
-// Mức trợ cấp
-router.get ('/allowance',        anyRole,           getAllowance)
-router.put ('/allowance',        keToansAndAdmin,   setAllowance)
+// ── GET /business-trips/allowance — Mức trợ cấp hiện tại ────────────────────
+export const getAllowance = asyncHandler(async (_req: Request, res: Response) => {
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT value FROM public.system_settings WHERE key = 'daily_allowance'`
+  )
+  const amount = rows.length ? Number(rows[0].value) : 150000
+  res.json(successResponse({ daily_allowance: amount }))
+})
 
-// CRUD của chính nhân viên
-router.get ('/my',               tripCreators,      getMyTrips)
-router.post('/',                 tripCreators,      createTrip)
+// ── PUT /business-trips/allowance — Cập nhật mức trợ cấp (admin only) ────────
+export const setAllowance = asyncHandler(async (req: Request, res: Response) => {
+  const { amount } = req.body
+  if (!amount || isNaN(Number(amount))) throw new AppError(400, 'Thiếu hoặc sai field "amount"')
 
-// Chi tiết (chủ sở hữu hoặc ke_toan/admin)
-router.get ('/:id',              anyRole,           getTripById)
-router.put ('/:id',              anyRole,           updateTrip)
-router.delete('/:id',            anyRole,           deleteTrip)
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO public.system_settings (key, value)
+     VALUES ('daily_allowance', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+    String(amount)
+  )
+  res.json(successResponse({ daily_allowance: Number(amount) }, 'Cập nhật mức trợ cấp thành công'))
+})
 
-// Quản lý (ke_toan + admin)
-router.get ('/',                 keToansAndAdmin,   getAllTrips)
-router.put ('/:id/approve',      keToansAndAdmin,   approveTrip)
-router.put ('/:id/reject',       keToansAndAdmin,   rejectTrip)
+// ── GET /business-trips/my ────────────────────────────────────────────────────
+export const getMyTrips = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id
+  const { month, year, status } = req.query as Record<string, string>
 
-export default router
+  let where = `bt.user_id = $1`
+  const params: any[] = [userId]
+  let idx = 2
+
+  if (month && year) {
+    where += ` AND EXTRACT(MONTH FROM bt.report_date) = $${idx++} AND EXTRACT(YEAR FROM bt.report_date) = $${idx++}`
+    params.push(Number(month), Number(year))
+  }
+  if (status) {
+    where += ` AND bt.status = $${idx++}`
+    params.push(status)
+  }
+
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT bt.*,
+            u.full_name, u.username, u.role,
+            (SELECT json_agg(i ORDER BY i.sort_order)
+             FROM business_trip_items i WHERE i.trip_id = bt.id) AS items
+     FROM business_trips bt
+     JOIN users u ON u.id = bt.user_id
+     WHERE ${where}
+     ORDER BY bt.report_date DESC`,
+    ...params
+  )
+
+  res.json(successResponse(rows))
+})
+
+// ── GET /business-trips (ke_toan + admin) ────────────────────────────────────
+export const getAllTrips = asyncHandler(async (req: Request, res: Response) => {
+  const { month, year, user_id, status } = req.query as Record<string, string>
+
+  let where = `1=1`
+  const params: any[] = []
+  let idx = 1
+
+  if (month && year) {
+    where += ` AND EXTRACT(MONTH FROM bt.report_date) = $${idx++} AND EXTRACT(YEAR FROM bt.report_date) = $${idx++}`
+    params.push(Number(month), Number(year))
+  }
+  if (user_id) {
+    where += ` AND bt.user_id = $${idx++}`
+    params.push(Number(user_id))
+  }
+  if (status) {
+    where += ` AND bt.status = $${idx++}`
+    params.push(status)
+  }
+
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT bt.*,
+            u.full_name, u.username, u.role, u.avatar_url,
+            (SELECT json_agg(i ORDER BY i.sort_order)
+             FROM business_trip_items i WHERE i.trip_id = bt.id) AS items
+     FROM business_trips bt
+     JOIN users u ON u.id = bt.user_id
+     WHERE ${where}
+     ORDER BY bt.report_date DESC, bt.created_at DESC`,
+    ...params
+  )
+
+  res.json(successResponse(rows))
+})
+
+// ── GET /business-trips/:id ───────────────────────────────────────────────────
+export const getTripById = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const userId = req.user!.id
+  const role   = req.user!.role
+
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT bt.*,
+            u.full_name, u.username, u.role,
+            (SELECT json_agg(i ORDER BY i.sort_order)
+             FROM business_trip_items i WHERE i.trip_id = bt.id) AS items
+     FROM business_trips bt
+     JOIN users u ON u.id = bt.user_id
+     WHERE bt.id = $1`,
+    Number(id)
+  )
+
+  if (!rows.length) throw new AppError(404, 'Không tìm thấy báo cáo công tác')
+
+  const trip = rows[0]
+  // Chỉ cho xem của mình trừ ke_toan / admin
+  if (role !== 'ke_toan' && role !== 'admin' && trip.user_id !== userId) {
+    throw new AppError(403, 'Bạn không có quyền xem báo cáo này')
+  }
+
+  res.json(successResponse(trip))
+})
+
+// ── POST /business-trips ──────────────────────────────────────────────────────
+export const createTrip = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id
+  const {
+    report_date, time_period, advance_amount, note, items = []
+  } = req.body
+
+  if (!report_date) throw new AppError(400, 'Thiếu ngày báo cáo')
+
+  // Tính tổng chi phí từ items
+  const total_amount  = (items as any[]).reduce((s: number, i: any) => s + Number(i.total_price ?? 0), 0)
+  const return_amount = Number(advance_amount ?? 0) - total_amount
+
+  // Tạo header
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO business_trips
+       (user_id, report_date, time_period, advance_amount, total_amount, return_amount, note)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    userId,
+    new Date(report_date),
+    time_period ?? null,
+    Number(advance_amount ?? 0),
+    total_amount,
+    return_amount,
+    note ?? null
+  )
+
+  // Lấy id vừa tạo
+  const tripRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id FROM business_trips WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, userId
+  )
+  const tripId = tripRows[0].id
+
+  // Tạo items
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO business_trip_items
+         (trip_id, date, ward, province, content, location, description,
+          note, has_invoice, sale_person, tech_person, unit, quantity, unit_price, total_price, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      tripId,
+      item.date ? new Date(item.date) : null,
+      item.ward        ?? null,
+      item.province    ?? null,
+      item.content     ?? null,
+      item.location    ?? null,
+      item.description ?? null,
+      item.note        ?? null,
+      Boolean(item.has_invoice),
+      item.sale_person ?? null,
+      item.tech_person ?? null,
+      item.unit        ?? 'Ngày',
+      Number(item.quantity   ?? 1),
+      Number(item.unit_price ?? 0),
+      Number(item.total_price ?? Number(item.quantity ?? 1) * Number(item.unit_price ?? 0)),
+      i
+    )
+  }
+
+  const result = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT bt.*, (SELECT json_agg(i ORDER BY i.sort_order)
+     FROM business_trip_items i WHERE i.trip_id = bt.id) AS items
+     FROM business_trips bt WHERE bt.id = $1`, tripId
+  )
+
+  res.status(201).json(successResponse(result[0], 'Tạo báo cáo công tác thành công'))
+})
+
+// ── PUT /business-trips/:id ───────────────────────────────────────────────────
+export const updateTrip = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const userId = req.user!.id
+  const role   = req.user!.role
+  const { report_date, time_period, advance_amount, note, items = [] } = req.body
+
+  const existing = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT * FROM business_trips WHERE id = $1`, Number(id)
+  )
+  if (!existing.length) throw new AppError(404, 'Không tìm thấy báo cáo')
+  if (existing[0].user_id !== userId && role !== 'ke_toan' && role !== 'admin') {
+    throw new AppError(403, 'Không có quyền cập nhật')
+  }
+  if (existing[0].status === 'approved') throw new AppError(400, 'Không thể sửa báo cáo đã duyệt')
+
+  const total_amount  = (items as any[]).reduce((s: number, i: any) => s + Number(i.total_price ?? 0), 0)
+  const return_amount = Number(advance_amount ?? existing[0].advance_amount) - total_amount
+
+  await prisma.$executeRawUnsafe(
+    `UPDATE business_trips
+     SET report_date = $1, time_period = $2, advance_amount = $3,
+         total_amount = $4, return_amount = $5, note = $6, updated_at = NOW()
+     WHERE id = $7`,
+    report_date ? new Date(report_date) : existing[0].report_date,
+    time_period ?? existing[0].time_period,
+    Number(advance_amount ?? existing[0].advance_amount),
+    total_amount,
+    return_amount,
+    note ?? existing[0].note,
+    Number(id)
+  )
+
+  // Xoá và tạo lại items
+  await prisma.$executeRawUnsafe(`DELETE FROM business_trip_items WHERE trip_id = $1`, Number(id))
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO business_trip_items
+         (trip_id, date, ward, province, content, location, description,
+          note, has_invoice, sale_person, tech_person, unit, quantity, unit_price, total_price, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      Number(id),
+      item.date ? new Date(item.date) : null,
+      item.ward ?? null, item.province ?? null, item.content ?? null,
+      item.location ?? null, item.description ?? null, item.note ?? null,
+      Boolean(item.has_invoice),
+      item.sale_person ?? null, item.tech_person ?? null,
+      item.unit ?? 'Ngày',
+      Number(item.quantity ?? 1), Number(item.unit_price ?? 0),
+      Number(item.total_price ?? Number(item.quantity ?? 1) * Number(item.unit_price ?? 0)),
+      i
+    )
+  }
+
+  const result = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT bt.*, (SELECT json_agg(i ORDER BY i.sort_order)
+     FROM business_trip_items i WHERE i.trip_id = bt.id) AS items
+     FROM business_trips bt WHERE bt.id = $1`, Number(id)
+  )
+  res.json(successResponse(result[0], 'Cập nhật thành công'))
+})
+
+// ── DELETE /business-trips/:id ────────────────────────────────────────────────
+export const deleteTrip = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const userId = req.user!.id
+  const role   = req.user!.role
+
+  const existing = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT * FROM business_trips WHERE id = $1`, Number(id)
+  )
+  if (!existing.length) throw new AppError(404, 'Không tìm thấy báo cáo')
+  if (existing[0].user_id !== userId && role !== 'ke_toan' && role !== 'admin') {
+    throw new AppError(403, 'Không có quyền xoá')
+  }
+  if (existing[0].status === 'approved') throw new AppError(400, 'Không thể xoá báo cáo đã duyệt')
+
+  await prisma.$executeRawUnsafe(`DELETE FROM business_trips WHERE id = $1`, Number(id))
+  res.json(successResponse(null, 'Xoá thành công'))
+})
+
+// ── PUT /business-trips/:id/approve ──────────────────────────────────────────
+export const approveTrip = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  await prisma.$executeRawUnsafe(
+    `UPDATE business_trips SET status = 'approved', updated_at = NOW() WHERE id = $1`, Number(id)
+  )
+  res.json(successResponse(null, 'Đã phê duyệt báo cáo'))
+})
+
+// ── PUT /business-trips/:id/reject ───────────────────────────────────────────
+export const rejectTrip = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const { note } = req.body ?? {}
+  await prisma.$executeRawUnsafe(
+    `UPDATE business_trips SET status = 'rejected', note = COALESCE($1, note), updated_at = NOW() WHERE id = $2`,
+    note ?? null, Number(id)
+  )
+  res.json(successResponse(null, 'Đã từ chối báo cáo'))
+})
