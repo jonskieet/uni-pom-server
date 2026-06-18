@@ -33,6 +33,7 @@ function notifyAssignees(params: {
 }) {
   const { newAssigneeIds, assignerName, taskTitle, planName, priority, dueDate, description } = params
   if (!newAssigneeIds.length) return
+  console.log('[Email] notifyAssignees called, ids:', newAssigneeIds) 
 
   // Chạy bất đồng bộ, không block response
   prisma.$queryRaw<{ id: number; email: string | null; full_name: string }[]>`
