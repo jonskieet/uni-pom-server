@@ -1,27 +1,16 @@
 // ============================================================
 // server/src/utils/emailService.ts
-// Gửi email thông báo qua Gmail SMTP (uni-thongbao@gmail.com)
+// Gửi email thông báo qua Resend API (HTTPS, không bị Render block)
 // ============================================================
 
-import nodemailer from 'nodemailer'
+import { Resend } from 'resend'
 
-// ── Tạo transporter một lần (singleton) ──────────────────────────────
-let _transporter: nodemailer.Transporter | null = null
+let _resend: Resend | null = null
 
-function getTransporter() {
-  if (_transporter) return _transporter
-
-  _transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // SSL
-    auth: {
-      user: process.env.EMAIL_USER,   // uni-thongbao@gmail.com
-      pass: process.env.EMAIL_PASS,   // App Password từ Google (16 ký tự)
-    },
-  })
-
-  return _transporter
+function getResend() {
+  if (_resend) return _resend
+  _resend = new Resend(process.env.RESEND_API_KEY)
+  return _resend
 }
 
 // ── Template email giao việc ──────────────────────────────────────────
@@ -145,25 +134,27 @@ export async function sendTaskAssignEmail(params: {
   dueDate?: string | null
   description?: string | null
 }): Promise<void> {
-  console.log('[Email] EMAIL_USER:', process.env.EMAIL_USER ?? '✗ THIẾU')
-  console.log('[Email] EMAIL_PASS:', process.env.EMAIL_PASS ? '✓ có' : '✗ THIẾU')
-  console.log('[Email] Đang gửi tới:', params.toEmail)
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('[Email] EMAIL_USER hoặc EMAIL_PASS chưa được cấu hình — bỏ qua gửi email')
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('[Email] RESEND_API_KEY chưa được cấu hình — bỏ qua gửi email')
     return
   }
 
   try {
-    const transporter = getTransporter()
-    await transporter.sendMail({
-      from: `"UNI BOM System" <${process.env.EMAIL_USER}>`,
+    const resend = getResend()
+    const { data, error } = await resend.emails.send({
+      from: 'UNI BOM System <onboarding@resend.dev>', // domain mặc định của Resend khi chưa có domain riêng
       to: params.toEmail,
       subject: `[UNI] Bạn được giao việc: ${params.taskTitle}`,
       html: buildAssignEmailHtml(params),
     })
-    console.log(`[Email] Đã gửi thông báo giao việc tới ${params.toEmail}`)
+
+    if (error) {
+      console.error('[Email] Resend trả lỗi:', error)
+      return
+    }
+
+    console.log(`[Email] Đã gửi thông báo giao việc tới ${params.toEmail} — id: ${data?.id}`)
   } catch (err) {
-    // Không throw — lỗi email không được làm hỏng API chính
     console.error('[Email] Lỗi gửi email:', err)
   }
-}   
+}
