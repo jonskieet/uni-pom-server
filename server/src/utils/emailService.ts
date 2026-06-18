@@ -1,16 +1,22 @@
 // ============================================================
 // server/src/utils/emailService.ts
-// Gửi email thông báo qua Resend API (HTTPS, không bị Render block)
+// Gửi email thông báo qua Nodemailer + Gmail SMTP
 // ============================================================
 
-import { Resend } from 'resend'
+import nodemailer from 'nodemailer'
 
-let _resend: Resend | null = null
+let _transporter: nodemailer.Transporter | null = null
 
-function getResend() {
-  if (_resend) return _resend
-  _resend = new Resend(process.env.RESEND_API_KEY)
-  return _resend
+function getTransporter() {
+  if (_transporter) return _transporter
+  _transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  })
+  return _transporter
 }
 
 // ── Template email giao việc ──────────────────────────────────────────
@@ -134,26 +140,20 @@ export async function sendTaskAssignEmail(params: {
   dueDate?: string | null
   description?: string | null
 }): Promise<void> {
-  if (!process.env.RESEND_API_KEY) {
-    console.warn('[Email] RESEND_API_KEY chưa được cấu hình — bỏ qua gửi email')
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.warn('[Email] EMAIL_USER/EMAIL_PASS chưa được cấu hình — bỏ qua gửi email')
     return
   }
 
   try {
-    const resend = getResend()
-    const { data, error } = await resend.emails.send({
-      from: 'UNI BOM System <onboarding@resend.dev>', // domain mặc định của Resend khi chưa có domain riêng
+    const transporter = getTransporter()
+    const info = await transporter.sendMail({
+      from: `"UNI BOM System" <${process.env.EMAIL_USER}>`,
       to: params.toEmail,
       subject: `[UNI] Bạn được giao việc: ${params.taskTitle}`,
       html: buildAssignEmailHtml(params),
     })
-
-    if (error) {
-      console.error('[Email] Resend trả lỗi:', error)
-      return
-    }
-
-    console.log(`[Email] Đã gửi thông báo giao việc tới ${params.toEmail} — id: ${data?.id}`)
+    console.log(`[Email] Đã gửi thông báo giao việc tới ${params.toEmail} — id: ${info.messageId}`)
   } catch (err) {
     console.error('[Email] Lỗi gửi email:', err)
   }
