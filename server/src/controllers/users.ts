@@ -126,7 +126,6 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
       const detail = err.message.split('\n').filter(Boolean).pop() ?? ''
       throw new AppError(400, `Dữ liệu không hợp lệ: ${detail}`)
     }
-    }
     throw err
   }
 })
