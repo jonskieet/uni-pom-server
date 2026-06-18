@@ -9,6 +9,7 @@ import {
   createUser,
   updateUser,
   updateAvatar,
+  updateEmail,
   deleteUser,
   resetPassword
 } from '../controllers/users'
@@ -22,6 +23,7 @@ router.get('/:id', getUserById)
 router.post('/', adminOnly, createUser)
 router.put('/:id', adminOnly, updateUser)
 router.put('/:id/avatar', updateAvatar)          // ← Không cần adminOnly
+router.put('/:id/email', updateEmail)             // ← Không cần adminOnly — chính chủ tự sửa được
 router.put('/:id/reset-password', adminOnly, resetPassword)
 router.delete('/:id', adminOnly, deleteUser)
 

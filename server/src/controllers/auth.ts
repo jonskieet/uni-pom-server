@@ -54,7 +54,8 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
         username:   user.username,
         full_name:  user.full_name,
         role:       user.role,
-        avatar_url: user.avatar_url ?? null   // bắt buộc để session lưu đúng
+        avatar_url: user.avatar_url ?? null,  // bắt buộc để session lưu đúng
+        email:      user.email ?? null
       }
     })
   )
@@ -110,6 +111,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       role: true,
       is_active: true,
       avatar_url: true,
+      email: true,
       created_at: true
     }
   })

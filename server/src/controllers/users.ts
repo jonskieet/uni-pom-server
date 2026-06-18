@@ -186,6 +186,45 @@ export const updateAvatar = asyncHandler(async (req: Request, res: Response) => 
 })
 
 /**
+ * PUT /users/:id/email — Cập nhật email (admin hoặc chính user đó)
+ */
+export const updateEmail = asyncHandler(async (req: Request, res: Response) => {
+  const targetId = parseInt(req.params.id)
+  const requesterId = req.user?.id
+  const requesterRole = req.user?.role
+
+  if (requesterRole !== 'admin' && requesterId !== targetId) {
+    throw new AppError(403, 'Bạn không có quyền cập nhật email của người dùng khác')
+  }
+
+  const { email } = req.body
+  if (email !== undefined && email !== null && typeof email !== 'string') {
+    throw new AppError(400, 'Email không hợp lệ')
+  }
+
+  const emailVal = email?.trim() || null
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+    throw new AppError(400, 'Email không hợp lệ')
+  }
+
+  const user = await prisma.user.update({
+    where: { id: targetId },
+    data: { email: emailVal, updated_at: new Date() },
+    select: {
+      id: true,
+      username: true,
+      full_name: true,
+      role: true,
+      is_active: true,
+      avatar_url: true,
+      email: true
+    }
+  })
+
+  res.json(successResponse(user))
+})
+
+/**
  * PUT /users/:id/reset-password — Đặt lại mật khẩu (admin only)
  */
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
