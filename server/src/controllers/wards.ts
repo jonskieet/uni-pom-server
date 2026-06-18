@@ -193,8 +193,7 @@ export const getWardSummary = asyncHandler(async (_req: Request, res: Response) 
 // ── CONTACTS ─────────────────────────────────────────────────
 export const getContacts = asyncHandler(async (req: Request, res: Response) => {
   const {
-    ward_id, province_id, district_id, search,
-    assigned_sale_id,   // ← THÊM: lọc theo sale phụ trách UBND
+    ward_id, province_id, district_id, search, relationship_status, assigned_to,
     page = '1', limit = '50'
   } = req.query
 
@@ -204,10 +203,11 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
   const conditions: string[] = ['c.is_active = TRUE']
   const params: any[] = []
 
-  if (ward_id)          { params.push(parseInt(ward_id as string));          conditions.push(`c.ward_id = $${params.length}`) }
-  if (province_id)      { params.push(parseInt(province_id as string));      conditions.push(`d.province_id = $${params.length}`) }
-  if (district_id)      { params.push(parseInt(district_id as string));      conditions.push(`w.district_id = $${params.length}`) }
-  if (assigned_sale_id) { params.push(parseInt(assigned_sale_id as string)); conditions.push(`w.assigned_sale_id = $${params.length}`) }
+  if (ward_id)             { params.push(parseInt(ward_id as string));             conditions.push(`c.ward_id = $${params.length}`) }
+  if (province_id)         { params.push(parseInt(province_id as string));         conditions.push(`d.province_id = $${params.length}`) }
+  if (district_id)         { params.push(parseInt(district_id as string));         conditions.push(`w.district_id = $${params.length}`) }
+  if (assigned_to)         { params.push(parseInt(assigned_to as string));         conditions.push(`c.assigned_to = $${params.length}`) }
+  if (relationship_status) { params.push(relationship_status as string);           conditions.push(`w.relationship_status = $${params.length}`) }
   if (search) {
     params.push(`%${search}%`)
     conditions.push(`(c.full_name ILIKE $${params.length} OR c.phone ILIKE $${params.length} OR c.title ILIKE $${params.length} OR w.full_name ILIKE $${params.length} OR w.name ILIKE $${params.length})`)
@@ -219,7 +219,6 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
     LEFT JOIN wards w     ON w.id = c.ward_id
     LEFT JOIN districts d ON d.id = w.district_id
     LEFT JOIN provinces p ON p.id = d.province_id
-    LEFT JOIN users u     ON u.id = w.assigned_sale_id
   `
 
   params.push(lim);  const limitIdx = params.length
@@ -229,11 +228,12 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
     SELECT c.*,
            w.name AS ward_name, w.full_name AS ward_full_name,
            w.relationship_status AS ward_relationship_status,
-           w.assigned_sale_id,
-           u.full_name AS assigned_sale_name,
            d.name AS district_name,
-           p.name AS province_name, p.short_name AS province_short
-    ${baseFrom} ${where}
+           p.name AS province_name,
+           u.full_name AS assigned_to_name
+    ${baseFrom}
+    LEFT JOIN users u ON u.id = c.assigned_to
+    ${where}
     ORDER BY c.is_primary DESC, c.full_name
     LIMIT $${limitIdx} OFFSET $${skipIdx}
   `, ...params)
@@ -249,15 +249,17 @@ export const getContacts = asyncHandler(async (req: Request, res: Response) => {
 
 export const createContact = asyncHandler(async (req: Request, res: Response) => {
   const { ward_id, full_name, gender, phone, phone_alt, email, title, department,
-          decision_role = 'influencer', zalo, birthday, note, is_primary = false } = req.body
+          decision_role = 'influencer', zalo, birthday, note, is_primary = false,
+          assigned_to } = req.body
   if (!ward_id || !full_name || !phone || !title) throw new AppError(400, 'ward_id, full_name, phone, title là bắt buộc')
   if (is_primary) {
     await prisma.$queryRaw`UPDATE contacts SET is_primary = FALSE WHERE ward_id = ${parseInt(ward_id)}`
   }
+  const assignedToVal = assigned_to ? parseInt(String(assigned_to)) : null
   const [contact] = await prisma.$queryRaw<any[]>`
-    INSERT INTO contacts (ward_id,full_name,gender,phone,phone_alt,email,title,department,decision_role,zalo,birthday,note,is_primary)
+    INSERT INTO contacts (ward_id,full_name,gender,phone,phone_alt,email,title,department,decision_role,zalo,birthday,note,is_primary,assigned_to)
     VALUES (${parseInt(ward_id)},${full_name},${gender||null},${phone},${phone_alt||null},${email||null},
-            ${title},${department||null},${decision_role},${zalo||null},${birthday||null}::date,${note||null},${!!is_primary})
+            ${title},${department||null},${decision_role},${zalo||null},${birthday||null}::date,${note||null},${!!is_primary},${assignedToVal})
     RETURNING *
   `
   res.status(201).json(successResponse(contact, 'Đã thêm liên hệ'))
@@ -265,7 +267,7 @@ export const createContact = asyncHandler(async (req: Request, res: Response) =>
 
 export const updateContact = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
-  const allowed = ['full_name','gender','phone','phone_alt','email','title','department','decision_role','zalo','birthday','note','is_primary']
+  const allowed = ['full_name','gender','phone','phone_alt','email','title','department','decision_role','zalo','birthday','note','is_primary','assigned_to']
   const sets: string[] = []; const vals: any[] = []
   if (req.body.is_primary) {
     const [c] = await prisma.$queryRaw<any[]>`SELECT ward_id FROM contacts WHERE id = ${id}`
