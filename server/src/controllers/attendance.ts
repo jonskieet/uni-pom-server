@@ -301,11 +301,11 @@ export const getStats = asyncHandler(async (req: Request, res: Response) => {
 
   const rows = await prisma.$queryRawUnsafe<any[]>(
     `SELECT u.id, u.full_name, u.role,
-            COUNT(*) FILTER (WHERE a.status = 'present') AS present_count,
-            COUNT(*) FILTER (WHERE a.status = 'late')    AS late_count,
-            COUNT(*) FILTER (WHERE a.status = 'absent')  AS absent_count,
-            COUNT(*) FILTER (WHERE a.status = 'leave')   AS leave_count,
-            COUNT(*)                                      AS total_days
+            COUNT(*) FILTER (WHERE a.status = 'present')::int AS present_count,
+            COUNT(*) FILTER (WHERE a.status = 'late')::int    AS late_count,
+            COUNT(*) FILTER (WHERE a.status = 'absent')::int  AS absent_count,
+            COUNT(*) FILTER (WHERE a.status = 'leave')::int   AS leave_count,
+            COUNT(*)::int                                      AS total_days
      FROM users u
      LEFT JOIN attendance a ON a.user_id = u.id AND a.date >= $1::date AND a.date <= $2::date
      WHERE u.role != 'admin' AND u.is_active = true
