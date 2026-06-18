@@ -145,6 +145,9 @@ export async function sendTaskAssignEmail(params: {
   dueDate?: string | null
   description?: string | null
 }): Promise<void> {
+  console.log('[Email] EMAIL_USER:', process.env.EMAIL_USER ?? '✗ THIẾU')
+  console.log('[Email] EMAIL_PASS:', process.env.EMAIL_PASS ? '✓ có' : '✗ THIẾU')
+  console.log('[Email] Đang gửi tới:', params.toEmail)
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.warn('[Email] EMAIL_USER hoặc EMAIL_PASS chưa được cấu hình — bỏ qua gửi email')
     return
@@ -163,4 +166,4 @@ export async function sendTaskAssignEmail(params: {
     // Không throw — lỗi email không được làm hỏng API chính
     console.error('[Email] Lỗi gửi email:', err)
   }
-}
+}   
