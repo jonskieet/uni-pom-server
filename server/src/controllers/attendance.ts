@@ -62,12 +62,73 @@ function getVietnamHourMinute(d: Date): { hour: number; minute: number } {
   return { hour, minute }
 }
 
-/** Phân loại đi trễ: giờ check-in > 08:30 → late */
-function computeStatus(checkIn: Date | null): string {
+// ── Cấu hình giờ làm (lưu trong system_settings, key = 'attendance_work_hours') ──
+const DEFAULT_WORK_HOURS = { work_start: '08:00', work_end: '17:30', late_threshold_minutes: 30 }
+
+type WorkHoursConfig = { work_start: string; work_end: string; late_threshold_minutes: number }
+
+function parseHHMM(value: string): { hour: number; minute: number } {
+  const [h, m] = String(value).split(':').map(Number)
+  return { hour: Number.isFinite(h) ? h : 0, minute: Number.isFinite(m) ? m : 0 }
+}
+
+async function getWorkHoursConfig(): Promise<WorkHoursConfig> {
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT value FROM public.system_settings WHERE key = 'attendance_work_hours'`
+  )
+  if (!rows.length) return DEFAULT_WORK_HOURS
+  try {
+    const raw = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value
+    return {
+      work_start: raw.work_start ?? DEFAULT_WORK_HOURS.work_start,
+      work_end: raw.work_end ?? DEFAULT_WORK_HOURS.work_end,
+      late_threshold_minutes: Number(raw.late_threshold_minutes ?? DEFAULT_WORK_HOURS.late_threshold_minutes),
+    }
+  } catch {
+    return DEFAULT_WORK_HOURS
+  }
+}
+
+/** Phân loại đi trễ: giờ check-in > (giờ vào chuẩn + ngưỡng trễ) → late */
+function computeStatus(checkIn: Date | null, cfg: WorkHoursConfig): string {
   if (!checkIn) return 'absent'
   const { hour, minute } = getVietnamHourMinute(checkIn)
-  return hour > 8 || (hour === 8 && minute > 30) ? 'late' : 'present'
+  const start = parseHHMM(cfg.work_start)
+  const limitMinutesTotal = start.hour * 60 + start.minute + Number(cfg.late_threshold_minutes || 0)
+  const checkInMinutesTotal = hour * 60 + minute
+  return checkInMinutesTotal > limitMinutesTotal ? 'late' : 'present'
 }
+
+// ── GET /attendance/work-hours — Cấu hình giờ làm hiện tại ───────────────────
+export const getWorkHours = asyncHandler(async (_req: Request, res: Response) => {
+  const cfg = await getWorkHoursConfig()
+  res.json(successResponse(cfg))
+})
+
+// ── PUT /attendance/work-hours — Cập nhật cấu hình giờ làm (admin/kế toán) ───
+export const setWorkHours = asyncHandler(async (req: Request, res: Response) => {
+  const { work_start, work_end, late_threshold_minutes } = req.body ?? {}
+
+  const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/
+  if (!timePattern.test(work_start)) throw new AppError(400, 'Giờ vào làm không hợp lệ (định dạng HH:mm)')
+  if (!timePattern.test(work_end)) throw new AppError(400, 'Giờ tan làm không hợp lệ (định dạng HH:mm)')
+
+  const threshold = Number(late_threshold_minutes)
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 180) {
+    throw new AppError(400, 'Ngưỡng đi trễ phải là số phút từ 0 đến 180')
+  }
+
+  const cfg: WorkHoursConfig = { work_start, work_end, late_threshold_minutes: threshold }
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO public.system_settings (key, value)
+     VALUES ('attendance_work_hours', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+    JSON.stringify(cfg)
+  )
+
+  res.json(successResponse(cfg, 'Cập nhật khung giờ làm việc thành công'))
+})
 
 // ── GET /attendance/my ───────────────────────────────────────────────────────
 export const getMyAttendance = asyncHandler(async (req: Request, res: Response) => {
@@ -142,7 +203,8 @@ export const checkIn = asyncHandler(async (req: Request, res: Response) => {
 
   const now     = new Date()
   const today   = toVietnamDateOnly(now)
-  const status  = computeStatus(now)
+  const cfg     = await getWorkHoursConfig()
+  const status  = computeStatus(now, cfg)
 
   // Upsert: nếu đã chấm công hôm nay thì không cho check-in lại
   const existing = await prisma.$queryRawUnsafe<any[]>(
