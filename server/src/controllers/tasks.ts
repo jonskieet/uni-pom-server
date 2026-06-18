@@ -7,6 +7,7 @@ import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { sendTaskAssignEmail } from '../utils/emailService'  // ← THÊM IMPORT NÀY
 
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()

@@ -17,19 +17,12 @@ const prisma = globalForPrisma._prisma
  * GET /users — Get all users
  */
 export const getUsers = asyncHandler(async (req: Request, res: Response) => {
-  const users = await prisma.user.findMany({
-    select: {
-      id: true,
-      username: true,
-      full_name: true,
-      role: true,
-      is_active: true,
-      avatar_url: true,
-      created_at: true
-    },
-    orderBy: { created_at: 'desc' }
-  })
-
+  // Dùng $queryRaw để lấy thêm cột email (chưa có trong Prisma schema)
+  const users = await prisma.$queryRaw<any[]>`
+    SELECT id, username, full_name, role, is_active, avatar_url, email, created_at
+    FROM users
+    ORDER BY created_at DESC
+  `
   res.json(successResponse(users))
 })
 
@@ -57,7 +50,7 @@ export const getUserById = asyncHandler(async (req: Request, res: Response) => {
  * POST /users — Create new user (admin only)
  */
 export const createUser = asyncHandler(async (req: Request, res: Response) => {
-  const { username, full_name, role, password } = req.body
+  const { username, full_name, role, password, email } = req.body
 
   if (!username || !full_name || !role || !password) {
     throw new AppError(400, 'username, full_name, role, and password are required')
@@ -69,24 +62,16 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const passwordHash = await hashPassword(password)
+  const emailVal = email?.trim() || null
 
-  const user = await prisma.user.create({
-    data: {
-      username,
-      full_name,
-      role,
-      password_hash: passwordHash
-    }
-  })
+  // Dùng $queryRaw để hỗ trợ cột email (chưa có trong Prisma schema)
+  const [user] = await prisma.$queryRaw<any[]>`
+    INSERT INTO users (username, full_name, role, password_hash, email, updated_at)
+    VALUES (${username}, ${full_name}, ${role}, ${passwordHash}, ${emailVal}, NOW())
+    RETURNING id, username, full_name, role, email
+  `
 
-  res.status(201).json(
-    successResponse({
-      id: user.id,
-      username: user.username,
-      full_name: user.full_name,
-      role: user.role
-    })
-  )
+  res.status(201).json(successResponse(user))
 })
 
 /**
@@ -94,7 +79,8 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
  * Accepts is_active as boolean | 0 | 1 | "0" | "1"
  */
 export const updateUser = asyncHandler(async (req: Request, res: Response) => {
-  const { full_name, role, is_active, avatar_url } = req.body
+  const { full_name, role, is_active, avatar_url, email } = req.body
+  const id = parseInt(req.params.id)
 
   // Normalise is_active: DB expects Boolean, frontend may send 0/1/true/false
   let normalizedIsActive: boolean | undefined = undefined
@@ -104,13 +90,13 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const user = await prisma.user.update({
-      where: { id: parseInt(req.params.id) },
+      where: { id },
       data: {
         ...(full_name !== undefined && full_name !== null && { full_name }),
         ...(role !== undefined && role !== null && { role }),
         ...(normalizedIsActive !== undefined && { is_active: normalizedIsActive }),
         ...(avatar_url !== undefined && { avatar_url }),
-        updated_at: new Date(), // explicit fallback in case @updatedAt decorator isn't applied
+        updated_at: new Date(),
       },
       select: {
         id: true,
@@ -122,12 +108,24 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
       }
     })
 
-    res.json(successResponse(user))
+    // Cập nhật email riêng qua $queryRaw (cột chưa có trong Prisma schema)
+    if (email !== undefined) {
+      const emailVal = email?.trim() || null
+      await prisma.$executeRaw`UPDATE users SET email = ${emailVal} WHERE id = ${id}`
+    }
+
+    // Lấy lại email để trả về
+    const [row] = await prisma.$queryRaw<{ email: string | null }[]>`
+      SELECT email FROM users WHERE id = ${id}
+    `
+
+    res.json(successResponse({ ...user, email: row?.email ?? null }))
   } catch (err: any) {
     // Prisma validation errors (invalid enum value, missing required field, etc.)
     if (err.name === 'PrismaClientValidationError') {
       const detail = err.message.split('\n').filter(Boolean).pop() ?? ''
       throw new AppError(400, `Dữ liệu không hợp lệ: ${detail}`)
+    }
     }
     throw err
   }
