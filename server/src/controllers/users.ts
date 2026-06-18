@@ -17,12 +17,19 @@ const prisma = globalForPrisma._prisma
  * GET /users — Get all users
  */
 export const getUsers = asyncHandler(async (req: Request, res: Response) => {
-  // Dùng $queryRaw để lấy thêm cột email (chưa có trong Prisma schema)
-  const users = await prisma.$queryRaw<any[]>`
-    SELECT id, username, full_name, role, is_active, avatar_url, email, created_at
-    FROM users
-    ORDER BY created_at DESC
-  `
+  const users = await prisma.user.findMany({
+    select: {
+      id: true,
+      username: true,
+      full_name: true,
+      role: true,
+      is_active: true,
+      avatar_url: true,
+      email: true,
+      created_at: true
+    },
+    orderBy: { created_at: 'desc' }
+  })
   res.json(successResponse(users))
 })
 
@@ -39,6 +46,7 @@ export const getUserById = asyncHandler(async (req: Request, res: Response) => {
       role: true,
       is_active: true,
       avatar_url: true,
+      email: true,
       created_at: true
     }
   })
@@ -64,12 +72,22 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   const passwordHash = await hashPassword(password)
   const emailVal = email?.trim() || null
 
-  // Dùng $queryRaw để hỗ trợ cột email (chưa có trong Prisma schema)
-  const [user] = await prisma.$queryRaw<any[]>`
-    INSERT INTO users (username, full_name, role, password_hash, email, updated_at)
-    VALUES (${username}, ${full_name}, ${role}, ${passwordHash}, ${emailVal}, NOW())
-    RETURNING id, username, full_name, role, email
-  `
+  const user = await prisma.user.create({
+    data: {
+      username,
+      full_name,
+      role,
+      password_hash: passwordHash,
+      email: emailVal
+    },
+    select: {
+      id: true,
+      username: true,
+      full_name: true,
+      role: true,
+      email: true
+    }
+  })
 
   res.status(201).json(successResponse(user))
 })
@@ -89,6 +107,8 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   }
 
   try {
+    const emailVal = email !== undefined ? (email?.trim() || null) : undefined
+
     const user = await prisma.user.update({
       where: { id },
       data: {
@@ -96,6 +116,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
         ...(role !== undefined && role !== null && { role }),
         ...(normalizedIsActive !== undefined && { is_active: normalizedIsActive }),
         ...(avatar_url !== undefined && { avatar_url }),
+        ...(emailVal !== undefined && { email: emailVal }),
         updated_at: new Date(),
       },
       select: {
@@ -104,22 +125,12 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
         full_name: true,
         role: true,
         is_active: true,
-        avatar_url: true
+        avatar_url: true,
+        email: true
       }
     })
 
-    // Cập nhật email riêng qua $queryRaw (cột chưa có trong Prisma schema)
-    if (email !== undefined) {
-      const emailVal = email?.trim() || null
-      await prisma.$executeRaw`UPDATE users SET email = ${emailVal} WHERE id = ${id}`
-    }
-
-    // Lấy lại email để trả về
-    const [row] = await prisma.$queryRaw<{ email: string | null }[]>`
-      SELECT email FROM users WHERE id = ${id}
-    `
-
-    res.json(successResponse({ ...user, email: row?.email ?? null }))
+    res.json(successResponse(user))
   } catch (err: any) {
     // Prisma validation errors (invalid enum value, missing required field, etc.)
     if (err.name === 'PrismaClientValidationError') {
