@@ -7,11 +7,55 @@ import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
-import { sendTaskAssignEmail } from '../utils/emailService'  // ← THÊM IMPORT NÀY
+import { sendTaskAssignEmail } from '../utils/emailService'
 
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
 const prisma = globalForPrisma._prisma
+
+// ── Helper: lấy tên plan ──────────────────────────────────────────────
+async function getPlanName(planId: number): Promise<string> {
+  const rows = await prisma.$queryRaw<{ name: string }[]>`
+    SELECT name FROM plans WHERE id = ${planId}
+  `
+  return rows[0]?.name ?? 'Không rõ'
+}
+
+// ── Helper: gửi email cho danh sách assignee mới (bất đồng bộ) ───────
+function notifyAssignees(params: {
+  newAssigneeIds: number[]
+  assignerName: string
+  taskTitle: string
+  planName: string
+  priority: string
+  dueDate?: string | Date | null
+  description?: string | null
+}) {
+  const { newAssigneeIds, assignerName, taskTitle, planName, priority, dueDate, description } = params
+  if (!newAssigneeIds.length) return
+
+  // Chạy bất đồng bộ, không block response
+  prisma.$queryRaw<{ id: number; email: string | null; full_name: string }[]>`
+    SELECT id, email, full_name FROM users WHERE id = ANY(${newAssigneeIds}::int[])
+  `.then(users => {
+    for (const u of users) {
+      if (!u.email) {
+        console.warn(`[Email] User #${u.id} (${u.full_name}) chưa có email — bỏ qua`)
+        continue
+      }
+      sendTaskAssignEmail({
+        toEmail: u.email,
+        recipientName: u.full_name,
+        taskTitle,
+        planName,
+        assignerName,
+        priority,
+        dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+        description: description ?? null,
+      })
+    }
+  }).catch(err => console.error('[Email] Lỗi lấy thông tin user:', err))
+}
 
 // ── PLANS ─────────────────────────────────────────────────────────────
 
@@ -288,6 +332,25 @@ export const createTask = asyncHandler(async (req: Request, res: Response) => {
     `
   }
 
+  // ── Gửi email thông báo cho các assignee ────────────────────────────
+  if (assigneeIds.length > 0) {
+    const [assigner] = await prisma.$queryRaw<{ full_name: string }[]>`
+      SELECT full_name FROM users WHERE id = ${createdBy}
+    `
+    getPlanName(planIdInt).then(planName => {
+      notifyAssignees({
+        newAssigneeIds: assigneeIds,
+        assignerName: assigner?.full_name ?? 'Hệ thống',
+        taskTitle: title.trim(),
+        planName,
+        priority: priorityVal,
+        dueDate: dueDateVal,
+        description: description || null,
+      })
+    })
+  }
+  // ────────────────────────────────────────────────────────────────────
+
   res.status(201).json(successResponse(task, 'Đã tạo nhiệm vụ'))
 })
 
@@ -340,12 +403,37 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
   `
 
   if (assigneeIds !== null) {
+    // Lấy danh sách cũ trước khi xóa để so sánh
+    const prevRows = await prisma.$queryRaw<{ user_id: number }[]>`
+      SELECT user_id FROM task_assignees WHERE task_id=${id}
+    `
+    const prevIds = new Set(prevRows.map(r => r.user_id))
+
     await prisma.$executeRaw`DELETE FROM task_assignees WHERE task_id=${id}`
     for (const uid of assigneeIds) {
       await prisma.$executeRaw`
         INSERT INTO task_assignees (task_id, user_id) VALUES (${id}, ${uid})
         ON CONFLICT DO NOTHING
       `
+    }
+
+    // Chỉ gửi email cho người được thêm MỚI
+    const newlyAssignedIds = assigneeIds.filter(uid => !prevIds.has(uid))
+    if (newlyAssignedIds.length > 0) {
+      const [actor] = await prisma.$queryRaw<{ full_name: string }[]>`
+        SELECT full_name FROM users WHERE id = ${req.user!.id}
+      `
+      getPlanName(cur.plan_id).then(planName => {
+        notifyAssignees({
+          newAssigneeIds: newlyAssignedIds,
+          assignerName: actor?.full_name ?? 'Hệ thống',
+          taskTitle: title,
+          planName,
+          priority,
+          dueDate: dueDate,
+          description,
+        })
+      })
     }
   }
 
