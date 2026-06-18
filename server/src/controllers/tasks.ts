@@ -39,6 +39,9 @@ function notifyAssignees(params: {
   prisma.$queryRaw<{ id: number; email: string | null; full_name: string }[]>`
     SELECT id, email, full_name FROM users WHERE id = ANY(${newAssigneeIds}::int[])
   `.then(users => {
+    console.log('[Email] Users found:', users)                          // ← thêm
+    console.log('[Email] EMAIL_USER:', process.env.EMAIL_USER)         // ← thêm
+    console.log('[Email] EMAIL_PASS exists:', !!process.env.EMAIL_PASS) // ← thêm
     for (const u of users) {
       if (!u.email) {
         console.warn(`[Email] User #${u.id} (${u.full_name}) chưa có email — bỏ qua`)

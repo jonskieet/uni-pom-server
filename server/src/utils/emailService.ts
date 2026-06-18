@@ -1,23 +1,11 @@
 // ============================================================
 // server/src/utils/emailService.ts
-// Gửi email thông báo qua Nodemailer + Gmail SMTP
+// Gửi email thông báo qua Brevo HTTP API (https://api.brevo.com)
+// Dùng HTTP API thay vì SMTP vì Render chặn outbound tới port 25/465/587
+// trên free web service — HTTP API đi qua port 443 nên không bị chặn.
 // ============================================================
 
-import nodemailer from 'nodemailer'
-
-let _transporter: nodemailer.Transporter | null = null
-
-function getTransporter() {
-  if (_transporter) return _transporter
-  _transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  })
-  return _transporter
-}
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email'
 
 // ── Template email giao việc ──────────────────────────────────────────
 function buildAssignEmailHtml(params: {
@@ -140,20 +128,34 @@ export async function sendTaskAssignEmail(params: {
   dueDate?: string | null
   description?: string | null
 }): Promise<void> {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('[Email] EMAIL_USER/EMAIL_PASS chưa được cấu hình — bỏ qua gửi email')
+  if (!process.env.BREVO_API_KEY || !process.env.EMAIL_FROM) {
+    console.warn('[Email] BREVO_API_KEY/EMAIL_FROM chưa được cấu hình — bỏ qua gửi email')
     return
   }
 
   try {
-    const transporter = getTransporter()
-    const info = await transporter.sendMail({
-      from: `"UNI BOM System" <${process.env.EMAIL_USER}>`,
-      to: params.toEmail,
-      subject: `[UNI] Bạn được giao việc: ${params.taskTitle}`,
-      html: buildAssignEmailHtml(params),
+    const res = await fetch(BREVO_API_URL, {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { name: 'UNI BOM System', email: process.env.EMAIL_FROM },
+        to: [{ email: params.toEmail, name: params.recipientName }],
+        subject: `[UNI] Bạn được giao việc: ${params.taskTitle}`,
+        htmlContent: buildAssignEmailHtml(params),
+      }),
     })
-    console.log(`[Email] Đã gửi thông báo giao việc tới ${params.toEmail} — id: ${info.messageId}`)
+
+    if (!res.ok) {
+      const errText = await res.text()
+      throw new Error(`Brevo API trả lỗi ${res.status}: ${errText}`)
+    }
+
+    const data = (await res.json()) as { messageId?: string }
+    console.log(`[Email] Đã gửi thông báo giao việc tới ${params.toEmail} — messageId: ${data.messageId}`)
   } catch (err) {
     console.error('[Email] Lỗi gửi email:', err)
   }
