@@ -55,6 +55,19 @@ function getInitials(fullName: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
+// ── Block wrapper: thay margin-bottom/margin-top trên <table> (Outlook bỏ qua
+// hoàn toàn margin trên table) bằng padding trên 1 <td> bọc ngoài duy nhất.
+// Cách này còn triệt tiêu luôn bug "float không clear" của các table
+// align="left"/"right" (badgePill, deletedWatermark...): vì mỗi block giờ nằm
+// trong 1 <td> riêng, không còn phần tử nào đứng cạnh nó trong cùng ô để bị
+// Outlook xếp lệch/đè lên nhau như đã thấy ở ảnh chụp Outlook (badge đè lên H1).
+function block(html: string, paddingBottom = 0, paddingTop = 0): string {
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td style="padding-top:${paddingTop}px; padding-bottom:${paddingBottom}px;">${html}</td></tr>
+</table>`
+}
+
 function roleLabel(role?: string | null)   { return role ? (ROLE_LABEL[role] ?? role) : '' }
 function statusLabel(s?: string | null)    { return s ? (STATUS_LABEL[s] ?? s) : 'Không rõ' }
 function priorityMeta(p?: string | null)   { return PRIORITY_META[p ?? ''] ?? { label: p ?? 'Không rõ', cssClass: 'medium' } }
@@ -74,7 +87,11 @@ function formatDateTime(date?: string | Date | null): string {
 const BASE_CSS = `
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background-color:#F0F2F5; font-family:'Segoe UI',Arial,sans-serif; margin:0; padding:0; }
-a { color:inherit; }
+a { color:inherit; text-decoration:none; }
+/* Outlook (Word engine) tự gán class MsoHyperlink/MsoHyperlinkFollowed (xanh +
+   gạch chân) cho mọi <a>, kể cả khi đã set color/text-decoration inline.
+   Override trực tiếp 2 class này để chặn từ gốc. */
+span.MsoHyperlink, span.MsoHyperlinkFollowed { color:inherit !important; text-decoration:none !important; }
 `
 // LƯU Ý: .priority-badge / .deleted-watermark / .person-tag đã bị XOÁ khỏi CSS này.
 // Outlook (Word rendering engine) KHÔNG hỗ trợ display:inline-block — class nào dùng
@@ -106,8 +123,8 @@ function priorityBadge(label: string, cssClass: string): string {
 
 // ── "Đã xóa" watermark badge (table-based, thay <span class="deleted-watermark">) ──
 function deletedWatermark(): string {
-  return `
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" style="margin-bottom:10px;">
+  const inner = `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right">
   <tr>
     <td bgcolor="#EF4444" align="center" valign="middle"
         style="background-color:#EF4444; border-radius:999px; padding:3px 10px; font-size:10px; font-weight:700;
@@ -115,20 +132,22 @@ function deletedWatermark(): string {
                font-family:'Segoe UI',Arial,sans-serif;">Đã xóa</td>
   </tr>
 </table>`
+  return block(inner, 10)
 }
 
 // ── Person tag "Người cũ" / "Người mới" (table-based, thay <span class="person-tag">) ──
 function personTag(text: string, variant: 'from' | 'to'): string {
   const bg    = variant === 'from' ? '#F3F4F6' : '#D1FAE5'
   const color = variant === 'from' ? '#6B7280' : '#065F46'
-  return `
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin-top:5px;">
+  const inner = `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
   <tr>
     <td bgcolor="${bg}" align="center" valign="middle"
         style="background-color:${bg}; border-radius:999px; padding:2px 8px; font-size:10px; font-weight:600;
                color:${color}; white-space:nowrap; font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(text)}</td>
   </tr>
 </table>`
+  return block(inner, 0, 5)
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -141,8 +160,8 @@ function personTag(text: string, variant: 'from' | 'to'): string {
 //   Reassign #064E3B → #1D6050
 //   Delete   #7F1D1D → #9E3232
 function logoBlock(iconBgHex: string): string {
-  return `
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+  const inner = `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0">
   <tr>
     <td width="36" valign="middle" style="padding-right:10px;">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="36">
@@ -161,13 +180,14 @@ function logoBlock(iconBgHex: string): string {
     </td>
   </tr>
 </table>`
+  return block(inner, 24)
 }
 
 // ── Badge pill (header) ────────────────────────────────────────────────
 // Dùng ký tự &#9679; (●) thay div tròn vì Outlook không support border-radius trên div
 function badgePill(text: string, bgHex: string, borderHex: string, dotColor: string): string {
-  return `
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left" style="margin-bottom:14px;">
+  const inner = `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left">
   <tr>
     <td bgcolor="${bgHex}"
         style="background-color:${bgHex}; border:1px solid ${borderHex}; border-radius:999px; padding:5px 14px;">
@@ -179,28 +199,34 @@ function badgePill(text: string, bgHex: string, borderHex: string, dotColor: str
       </table>
     </td>
   </tr>
-</table>
-<div style="clear:both; line-height:0; font-size:0;">&nbsp;</div>`
+</table>`
+  // Không dùng <div style="clear:both"> nữa — Outlook (Word engine) không clear
+  // float một cách đáng tin cậy bằng div. Thay vào đó bọc cả pill trong 1 <td>
+  // riêng (block()) để float "align=left" bị giam trong đúng ô đó, không tràn
+  // sang phần tử kế tiếp (h1 tiêu đề) như bug đã thấy trên Outlook.
+  return block(inner, 14)
 }
 
 // ── Task card wrapper (table thay div) ────────────────────────────────
 function taskCard(bg: string, border: string, content: string): string {
-  return `
+  const inner = `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       bgcolor="${bg}" style="background-color:${bg}; border:1px solid ${border}; border-radius:16px; margin-bottom:24px;">
+       bgcolor="${bg}" style="background-color:${bg}; border:1px solid ${border}; border-radius:16px;">
   <tr><td style="padding:20px;">${content}</td></tr>
 </table>`
+  return block(inner, 24)
 }
 
 // ── Task card header row (title + priority badge) ──────────────────────
 function taskCardHeader(title: string, badgeHtml: string): string {
-  return `
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;">
+  const inner = `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr>
     <td width="68%" valign="top" style="font-size:17px; font-weight:700; color:#111827; line-height:1.35; font-family:'Segoe UI',Arial,sans-serif;">${title}</td>
     <td width="32%" valign="top" align="right" style="padding-left:8px;">${badgeHtml}</td>
   </tr>
 </table>`
+  return block(inner, 12)
 }
 
 // ── Meta grid 2x2 ─────────────────────────────────────────────────────
@@ -230,20 +256,21 @@ function metaGrid(items: [string, string][], cellBg = '#ffffff', cellBorder = '#
 
 // ── Divider (table thay div) ───────────────────────────────────────────
 function dividerRow(): string {
-  return `
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+  const inner = `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr>
     <td bgcolor="#F3F4F6" height="1" style="background-color:#F3F4F6; font-size:0; line-height:1px;">&nbsp;</td>
   </tr>
 </table>`
+  return block(inner, 24, 24)
 }
 
 // ── Info/warning box (table) ───────────────────────────────────────────
 // icon: ký tự text/HTML entity — KHÔNG dùng emoji
 function infoBox(bg: string, border: string, textColor: string, icon: string, html: string): string {
-  return `
+  const inner = `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       bgcolor="${bg}" style="background-color:${bg}; border:1px solid ${border}; border-radius:12px; margin-bottom:24px;">
+       bgcolor="${bg}" style="background-color:${bg}; border:1px solid ${border}; border-radius:12px;">
   <tr>
     <td style="padding:14px 16px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -255,16 +282,22 @@ function infoBox(bg: string, border: string, textColor: string, icon: string, ht
     </td>
   </tr>
 </table>`
+  return block(inner, 24)
 }
 
 // ── CTA Button (bulletproof table button) ──────────────────────────────
 function ctaButton(label: string, bgFrom: string, bgTo: string, taskId?: number, fallbackPath = '/planner'): string {
   const href = APP_URL ? `${APP_URL}${taskId ? `/planner/task/${taskId}` : fallbackPath}` : null
+  // Outlook (Word engine) tự gán style "Hyperlink" mặc định (xanh + gạch chân)
+  // cho MỌI thẻ <a>, đè lên color/text-decoration inline đã set. !important
+  // trên <a> giúp một phần, nhưng cách chắc chắn nhất là bọc chữ trong 1
+  // <span> riêng có color rõ ràng — style Hyperlink của Word chỉ áp vào <a>,
+  // không đè được lên <span> con bên trong nó.
   const inner = href
-    ? `<a href="${href}" style="display:inline-block; padding:13px 32px; font-size:14px; font-weight:700; color:#ffffff; text-decoration:none; letter-spacing:0.01em; font-family:'Segoe UI',Arial,sans-serif;">${label}</a>`
+    ? `<a href="${href}" style="display:inline-block; padding:13px 32px; font-size:14px; font-weight:700; color:#ffffff!important; text-decoration:none!important; letter-spacing:0.01em; font-family:'Segoe UI',Arial,sans-serif;"><span style="color:#ffffff; text-decoration:none; font-weight:700; font-family:'Segoe UI',Arial,sans-serif; mso-text-raise:1px;">${label}</span></a>`
     : `<span style="display:inline-block; padding:13px 32px; font-size:14px; font-weight:700; color:#ffffff; font-family:'Segoe UI',Arial,sans-serif;">${label}</span>`
-  return `
-<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 24px;">
+  const buttonTable = `
+<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0">
   <tr>
     <td align="center" bgcolor="${bgFrom}"
         style="background-color:${bgFrom}; background-image:linear-gradient(135deg,${bgFrom},${bgTo}); border-radius:999px;">
@@ -272,6 +305,7 @@ function ctaButton(label: string, bgFrom: string, bgTo: string, taskId?: number,
     </td>
   </tr>
 </table>`
+  return block(buttonTable, 24)
 }
 
 // ── Person row (người giao/thay đổi/xóa) ──────────────────────────────
@@ -417,9 +451,9 @@ ${metaGrid([
   ['Ngay giao',     formatDateTime(p.assignedDate)],
 ])}`
 
-  const planContent = `
+  const planContent = block(`
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       bgcolor="#EEF2FF" style="background-color:#EEF2FF;border:1px solid #C7D2FE;border-radius:12px;margin-bottom:24px;">
+       bgcolor="#EEF2FF" style="background-color:#EEF2FF;border:1px solid #C7D2FE;border-radius:12px;">
   <tr><td style="padding:14px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
@@ -436,7 +470,7 @@ ${metaGrid([
       </tr>
     </table>
   </td></tr>
-</table>`
+</table>`, 24)
 
   const rows = `
 <tr>
@@ -504,9 +538,9 @@ ${badgePill('Thay đổi người thực hiện', BBDG, BORD, DOT)}
     ? `<strong style="color:#111827;">${escapeHtml(p.changedByName)}</strong> đã chuyển nhiệm vụ <strong style="color:#111827;">&quot;${escapeHtml(p.taskTitle)}&quot;</strong> sang cho bạn trong dự án <strong style="color:#111827;">${escapeHtml(p.planName)}</strong>.`
     : `Nhiệm vụ <strong style="color:#111827;">&quot;${escapeHtml(p.taskTitle)}&quot;</strong> trong dự án <strong style="color:#111827;">${escapeHtml(p.planName)}</strong> đã được chuyển sang cho người khác bởi <strong style="color:#111827;">${escapeHtml(p.changedByName)}</strong>.`
 
-  const transferVisual = `
+  const transferVisual = block(`
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       bgcolor="#F0FDF4" style="background-color:#F0FDF4;border:1px solid #A7F3D0;border-radius:16px;margin-bottom:24px;">
+       bgcolor="#F0FDF4" style="background-color:#F0FDF4;border:1px solid #A7F3D0;border-radius:16px;">
   <tr><td style="padding:16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
@@ -539,7 +573,7 @@ ${badgePill('Thay đổi người thực hiện', BBDG, BORD, DOT)}
       </tr>
     </table>
   </td></tr>
-</table>`
+</table>`, 24)
 
   const taskContent = `
 ${taskCardHeader(escapeHtml(p.taskTitle), priorityBadge(pri.label, pri.cssClass))}
