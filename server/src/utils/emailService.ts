@@ -187,9 +187,10 @@ function infoBox(
 }
 
 /**
- * Bulletproof CTA button.
- * Outlook (Word engine) gán style Hyperlink (xanh + gạch chân) cho mọi <a> —
- * bọc text trong <span> riêng để tránh bị override.
+ * Bulletproof CTA button — bo tròn thật trên cả Gmail lẫn Outlook.
+ * - Outlook: VML <v:roundrect> arcsize=50% → pill tròn hoàn hảo
+ * - Gmail / Apple Mail: <a> table-cell với border-radius:999px
+ * - <span> bọc chữ để chặn Outlook override màu Hyperlink xanh
  */
 function ctaButton(
   label: string,
@@ -199,29 +200,37 @@ function ctaButton(
 ): string {
   const href = APP_URL
     ? `${APP_URL}${taskId ? `/planner/task/${taskId}` : fallbackPath}`
-    : null
-  const inner = href
-    ? `<a href="${href}"
-          style="display:inline-block;padding:13px 32px;font-size:14px;font-weight:700;
-                 color:#ffffff!important;text-decoration:none!important;
-                 letter-spacing:0.01em;font-family:'Segoe UI',Arial,sans-serif;">
-         <span style="color:#ffffff;text-decoration:none;font-weight:700;
-                      font-family:'Segoe UI',Arial,sans-serif;">${label}</span>
-       </a>`
-    : `<span style="display:inline-block;padding:13px 32px;font-size:14px;font-weight:700;
-                    color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;">${label}</span>`
+    : '#'
+
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
         style="margin-bottom:24px;">
   <tr>
     <td align="center">
+      <!--[if mso]>
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+        href="${href}" style="height:46px;v-text-anchor:middle;width:260px;"
+        arcsize="50%" fillcolor="${bgColor}" stroke="f">
+        <w:anchorlock/>
+        <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;
+                       text-decoration:none;letter-spacing:0.01em;">${label}</center>
+      </v:roundrect>
+      <![endif]-->
+      <!--[if !mso]><!-->
       <table role="presentation" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td align="center" bgcolor="${bgColor}"
               style="background-color:${bgColor};border-radius:999px;">
-            ${inner}
+            <a href="${href}"
+               style="display:inline-block;padding:13px 32px;font-size:14px;font-weight:700;
+                      color:#ffffff!important;text-decoration:none!important;
+                      letter-spacing:0.01em;font-family:'Segoe UI',Arial,sans-serif;">
+              <span style="color:#ffffff;text-decoration:none;font-weight:700;
+                           font-family:'Segoe UI',Arial,sans-serif;">${label}</span>
+            </a>
           </td>
         </tr>
       </table>
+      <!--<![endif]-->
     </td>
   </tr>
 </table>`
@@ -242,17 +251,26 @@ function personRow(opts: {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td width="46" valign="middle" style="padding-right:10px;">
+            <!--[if mso]>
+            <v:oval xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+              style="height:36px;v-text-anchor:middle;width:36px;" fillcolor="${opts.avatarBg}" stroke="f">
+              <w:anchorlock/>
+              <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;">${getInitials(opts.name)}</center>
+            </v:oval>
+            <![endif]-->
+            <!--[if !mso]><!-->
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="36">
               <tr>
                 <td bgcolor="${opts.avatarBg}" align="center" valign="middle"
                     width="36" height="36"
                     style="background-color:${opts.avatarBg};border-radius:50%;color:#ffffff;
-                           font-size:14px;font-weight:700;
+                           font-size:14px;font-weight:700;line-height:36px;
                            font-family:'Segoe UI',Arial,sans-serif;text-align:center;">
                   ${getInitials(opts.name)}
                 </td>
               </tr>
             </table>
+            <!--<![endif]-->
           </td>
           <td valign="middle">
             <div style="font-size:13px;font-weight:600;color:#111827;
@@ -279,14 +297,23 @@ function logoBlock(iconBgHex: string): string {
         style="margin-bottom:24px;">
   <tr>
     <td width="46" valign="middle">
+      <!--[if mso]>
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+        style="height:36px;v-text-anchor:middle;width:36px;" arcsize="28%" fillcolor="${iconBgHex}" stroke="f">
+        <w:anchorlock/>
+        <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;">U</center>
+      </v:roundrect>
+      <![endif]-->
+      <!--[if !mso]><!-->
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="36">
         <tr>
           <td bgcolor="${iconBgHex}" align="center" valign="middle" width="36" height="36"
               style="background-color:${iconBgHex};border-radius:10px;color:#ffffff;
-                     font-weight:700;font-size:14px;
+                     font-weight:700;font-size:14px;line-height:36px;
                      font-family:'Segoe UI',Arial,sans-serif;text-align:center;">U</td>
         </tr>
       </table>
+      <!--<![endif]-->
     </td>
     <td valign="middle" style="padding-left:10px;">
       <div style="font-size:15px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;
@@ -649,17 +676,26 @@ function buildReassignEmailHtml(p: TaskReassignEmailParams): string {
           <tr>
             <!-- Old person -->
             <td width="42%" align="center" valign="top" style="padding:10px;">
+              <!--[if mso]>
+              <v:oval xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                style="height:48px;v-text-anchor:middle;width:48px;" fillcolor="#9CA3AF" stroke="f">
+                <w:anchorlock/>
+                <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:18px;font-weight:700;">${getInitials(p.oldAssigneeName)}</center>
+              </v:oval>
+              <![endif]-->
+              <!--[if !mso]><!-->
               <table role="presentation" cellpadding="0" cellspacing="0" border="0"
                      style="margin:0 auto 8px;">
                 <tr>
                   <td bgcolor="#9CA3AF" align="center" valign="middle" width="48" height="48"
                       style="background-color:#9CA3AF;border-radius:50%;
-                             color:#ffffff;font-size:18px;font-weight:700;
+                             color:#ffffff;font-size:18px;font-weight:700;line-height:48px;
                              font-family:'Segoe UI',Arial,sans-serif;text-align:center;">
                     ${getInitials(p.oldAssigneeName)}
                   </td>
                 </tr>
               </table>
+              <!--<![endif]-->
               <div style="font-size:13px;font-weight:700;color:#111827;
                           font-family:'Segoe UI',Arial,sans-serif;">
                 ${escapeHtml(p.oldAssigneeName)}
@@ -691,17 +727,26 @@ function buildReassignEmailHtml(p: TaskReassignEmailParams): string {
 
             <!-- New person -->
             <td width="42%" align="center" valign="top" style="padding:10px;">
+              <!--[if mso]>
+              <v:oval xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                style="height:48px;v-text-anchor:middle;width:48px;" fillcolor="#10B981" stroke="f">
+                <w:anchorlock/>
+                <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:18px;font-weight:700;">${getInitials(p.newAssigneeName)}</center>
+              </v:oval>
+              <![endif]-->
+              <!--[if !mso]><!-->
               <table role="presentation" cellpadding="0" cellspacing="0" border="0"
                      style="margin:0 auto 8px;">
                 <tr>
                   <td bgcolor="#10B981" align="center" valign="middle" width="48" height="48"
                       style="background-color:#10B981;border-radius:50%;
-                             color:#ffffff;font-size:18px;font-weight:700;
+                             color:#ffffff;font-size:18px;font-weight:700;line-height:48px;
                              font-family:'Segoe UI',Arial,sans-serif;text-align:center;">
                     ${getInitials(p.newAssigneeName)}
                   </td>
                 </tr>
               </table>
+              <!--<![endif]-->
               <div style="font-size:13px;font-weight:700;color:#111827;
                           font-family:'Segoe UI',Arial,sans-serif;">
                 ${escapeHtml(p.newAssigneeName)}
