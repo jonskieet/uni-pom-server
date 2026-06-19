@@ -19,100 +19,281 @@ function buildAssignEmailHtml(params: {
 }) {
   const { recipientName, taskTitle, planName, assignerName, priority, dueDate, description } = params
 
-  const priorityLabel: Record<string, string> = {
-    low: '🟢 Thấp',
-    medium: '🟡 Trung bình',
-    urgent: '🔴 Khẩn cấp',
+  type PriorityMeta = { label: string; color: string; dot: string }
+  const priorityMap: Record<string, PriorityMeta> = {
+    low:    { label: 'THẤP',       color: '#059669', dot: '#d1fae5' },
+    medium: { label: 'TRUNG BÌNH', color: '#d97706', dot: '#fef3c7' },
+    urgent: { label: 'KHẨN CẤP',  color: '#dc2626', dot: '#fee2e2' },
   }
+  const pri: PriorityMeta = priorityMap[priority] ?? { label: priority.toUpperCase(), color: '#6b7280', dot: '#f3f4f6' }
 
   const dueDateStr = dueDate
-    ? new Date(dueDate).toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-    : 'Chưa đặt hạn'
+    ? new Date(dueDate).toLocaleDateString('vi-VN', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      })
+    : null
 
-  return `
-<!DOCTYPE html>
-<html lang="vi">
+  const year = new Date().getFullYear()
+
+  // Divider dùng lại
+  const divider = `<tr><td colspan="3" style="padding:0;"><div style="height:1px;background:#f1f5f9;font-size:0;line-height:0;">&nbsp;</div></td></tr>`
+
+  return `<!DOCTYPE html>
+<html lang="vi" xmlns="http://www.w3.org/1999/xhtml">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Thông báo giao việc</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+  <title>Thông báo nhiệm vụ</title>
 </head>
-<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0;">
-    <tr><td align="center">
-      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-        
-        <!-- Header -->
+<body style="margin:0;padding:0;background:#eef2f7;">
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+  style="background:#eef2f7;">
+  <tr>
+    <td align="center" style="padding:48px 16px;">
+
+      <!-- ══ OUTER SHELL 600px ══════════════════════════════════════ -->
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+        style="max-width:600px;width:100%;">
+
+        <!-- ── WORDMARK ─────────────────────────────────────────── -->
         <tr>
-          <td style="background:linear-gradient(135deg,#1e3a5f 0%,#2d6a9f 100%);padding:28px 32px;text-align:center;">
-            <div style="display:inline-flex;align-items:center;gap:10px;">
-              <span style="font-size:28px;">📋</span>
-              <span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.5px;">UNI BOM System</span>
-            </div>
-            <p style="color:#a8c8e8;margin:6px 0 0;font-size:13px;">Hệ thống quản lý dự án</p>
+          <td align="center" style="padding-bottom:28px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="padding:0 12px 0 0;border-right:2px solid #cbd5e1;line-height:1;">
+                  <span style="font-family:Arial,Helvetica,sans-serif;font-size:18px;
+                    font-weight:900;letter-spacing:3px;color:#0f172a;
+                    text-transform:uppercase;">UNI</span>
+                </td>
+                <td style="padding:0 0 0 12px;line-height:1;">
+                  <span style="font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                    font-weight:600;letter-spacing:1.8px;color:#64748b;
+                    text-transform:uppercase;">BOM System</span>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
 
-        <!-- Body -->
+        <!-- ── MAIN CARD ─────────────────────────────────────────── -->
         <tr>
-          <td style="padding:32px;">
-            <p style="color:#374151;font-size:16px;margin:0 0 8px;">Xin chào <strong>${recipientName}</strong>,</p>
-            <p style="color:#6b7280;font-size:14px;margin:0 0 24px;line-height:1.6;">
-              Bạn vừa được giao một nhiệm vụ mới trong hệ thống UNI BOM. Vui lòng xem chi tiết bên dưới.
-            </p>
+          <td style="background:#ffffff;border-radius:2px;
+            box-shadow:0 2px 8px rgba(15,23,42,0.06),0 0 1px rgba(15,23,42,0.08);">
 
-            <!-- Task card -->
-            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #2d6a9f;border-radius:8px;padding:20px;margin-bottom:20px;">
-              <p style="color:#1e3a5f;font-size:18px;font-weight:700;margin:0 0 16px;">📌 ${taskTitle}</p>
-              
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="padding:6px 0;color:#6b7280;font-size:13px;width:120px;">📂 Kế hoạch:</td>
-                  <td style="padding:6px 0;color:#374151;font-size:13px;font-weight:600;">${planName}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#6b7280;font-size:13px;">👤 Giao bởi:</td>
-                  <td style="padding:6px 0;color:#374151;font-size:13px;font-weight:600;">${assignerName}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#6b7280;font-size:13px;">⚡ Độ ưu tiên:</td>
-                  <td style="padding:6px 0;color:#374151;font-size:13px;font-weight:600;">${priorityLabel[priority] ?? priority}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#6b7280;font-size:13px;">📅 Hạn hoàn thành:</td>
-                  <td style="padding:6px 0;color:${dueDate ? '#d97706' : '#9ca3af'};font-size:13px;font-weight:600;">${dueDateStr}</td>
-                </tr>
-                ${description ? `
-                <tr>
-                  <td colspan="2" style="padding:12px 0 0;">
-                    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:12px;">
-                      <p style="color:#6b7280;font-size:12px;margin:0 0 6px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Mô tả</p>
-                      <p style="color:#374151;font-size:13px;margin:0;line-height:1.6;">${description}</p>
-                    </div>
-                  </td>
-                </tr>` : ''}
-              </table>
-            </div>
+            <!-- Top rule — màu accent 3px -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#1d4ed8;height:3px;font-size:0;line-height:0;">&nbsp;</td>
+              </tr>
+            </table>
 
-            <p style="color:#6b7280;font-size:13px;line-height:1.6;margin:0;">
-              Vui lòng đăng nhập vào <strong>UNI BOM System</strong> để xem chi tiết và cập nhật tiến độ nhiệm vụ.
-            </p>
+            <!-- HEADER ZONE -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="padding:36px 48px 28px;">
+
+                  <!-- Category pill -->
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                    style="margin-bottom:20px;">
+                    <tr>
+                      <td style="background:#eff6ff;border-radius:2px;padding:5px 12px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                          font-weight:700;letter-spacing:2px;color:#1d4ed8;
+                          text-transform:uppercase;">Thông báo nhiệm vụ</span>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Greeting -->
+                  <p style="font-family:Georgia,'Times New Roman',serif;font-size:24px;
+                    font-weight:400;color:#0f172a;margin:0 0 10px;line-height:1.35;">
+                    Xin chào, <em>${recipientName}</em>
+                  </p>
+                  <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                    color:#64748b;margin:0;line-height:1.75;">
+                    Bạn vừa được giao một nhiệm vụ mới trong hệ thống
+                    <strong style="color:#0f172a;font-weight:700;">UNI BOM</strong>.
+                    Vui lòng xem thông tin chi tiết bên dưới.
+                  </p>
+
+                </td>
+              </tr>
+            </table>
+
+            <!-- TASK BLOCK -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="padding:0 48px;">
+
+                  <!-- Task title bar — nền tối -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                    style="background:#0f172a;border-radius:2px 2px 0 0;">
+                    <tr>
+                      <td style="padding:22px 28px;">
+                        <p style="font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                          font-weight:700;letter-spacing:2px;color:#475569;
+                          text-transform:uppercase;margin:0 0 8px;">Nhiệm vụ</p>
+                        <p style="font-family:Georgia,'Times New Roman',serif;font-size:19px;
+                          color:#f8fafc;margin:0;line-height:1.4;">${taskTitle}</p>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Meta table — nền trắng viền -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                    style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 2px 2px;">
+
+                    <!-- Kế hoạch -->
+                    <tr>
+                      <td style="padding:14px 28px;width:32px;vertical-align:middle;">
+                        <div style="width:6px;height:6px;background:#cbd5e1;border-radius:50%;"></div>
+                      </td>
+                      <td style="padding:14px 0;vertical-align:middle;width:120px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                          font-weight:700;letter-spacing:0.8px;color:#94a3b8;
+                          text-transform:uppercase;">Kế hoạch</span>
+                      </td>
+                      <td style="padding:14px 28px 14px 0;vertical-align:middle;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                          font-weight:600;color:#1e293b;">${planName}</span>
+                      </td>
+                    </tr>
+                    ${divider}
+
+                    <!-- Giao bởi -->
+                    <tr>
+                      <td style="padding:14px 28px;width:32px;vertical-align:middle;">
+                        <div style="width:6px;height:6px;background:#cbd5e1;border-radius:50%;"></div>
+                      </td>
+                      <td style="padding:14px 0;vertical-align:middle;width:120px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                          font-weight:700;letter-spacing:0.8px;color:#94a3b8;
+                          text-transform:uppercase;">Giao bởi</span>
+                      </td>
+                      <td style="padding:14px 28px 14px 0;vertical-align:middle;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                          font-weight:600;color:#1e293b;">${assignerName}</span>
+                      </td>
+                    </tr>
+                    ${divider}
+
+                    <!-- Độ ưu tiên -->
+                    <tr>
+                      <td style="padding:14px 28px;width:32px;vertical-align:middle;">
+                        <div style="width:6px;height:6px;background:#cbd5e1;border-radius:50%;"></div>
+                      </td>
+                      <td style="padding:14px 0;vertical-align:middle;width:120px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                          font-weight:700;letter-spacing:0.8px;color:#94a3b8;
+                          text-transform:uppercase;">Ưu tiên</span>
+                      </td>
+                      <td style="padding:14px 28px 14px 0;vertical-align:middle;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                          <tr>
+                            <td style="background:${pri.dot};border-radius:2px;padding:4px 11px;">
+                              <span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                                font-weight:700;letter-spacing:1px;color:${pri.color};
+                                text-transform:uppercase;">${pri.label}</span>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    ${divider}
+
+                    <!-- Hạn hoàn thành -->
+                    <tr>
+                      <td style="padding:14px 28px;width:32px;vertical-align:middle;">
+                        <div style="width:6px;height:6px;background:#cbd5e1;border-radius:50%;"></div>
+                      </td>
+                      <td style="padding:14px 0;vertical-align:middle;width:120px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                          font-weight:700;letter-spacing:0.8px;color:#94a3b8;
+                          text-transform:uppercase;">Hạn nộp</span>
+                      </td>
+                      <td style="padding:14px 28px 14px 0;vertical-align:middle;">
+                        ${dueDateStr
+                          ? `<span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                              font-weight:700;color:#b45309;">${dueDateStr}</span>`
+                          : `<span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                              color:#94a3b8;font-style:italic;">Chưa đặt hạn</span>`
+                        }
+                      </td>
+                    </tr>
+
+                    ${description ? `
+                    ${divider}
+                    <!-- Mô tả -->
+                    <tr>
+                      <td style="padding:14px 28px;width:32px;vertical-align:top;padding-top:18px;">
+                        <div style="width:6px;height:6px;background:#cbd5e1;border-radius:50%;margin-top:4px;"></div>
+                      </td>
+                      <td style="padding:14px 0;vertical-align:top;width:120px;padding-top:18px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                          font-weight:700;letter-spacing:0.8px;color:#94a3b8;
+                          text-transform:uppercase;">Mô tả</span>
+                      </td>
+                      <td style="padding:14px 28px 20px 0;vertical-align:top;padding-top:18px;">
+                        <span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                          color:#475569;line-height:1.75;">${description}</span>
+                      </td>
+                    </tr>` : ''}
+
+                  </table>
+
+                </td>
+              </tr>
+            </table>
+
+            <!-- NOTE -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="padding:28px 48px 36px;">
+                  <p style="font-family:Arial,Helvetica,sans-serif;font-size:13px;
+                    color:#64748b;margin:0;line-height:1.8;">
+                    Vui lòng đăng nhập vào
+                    <strong style="color:#0f172a;">UNI BOM System</strong>
+                    để xem chi tiết và cập nhật tiến độ nhiệm vụ.
+                  </p>
+                </td>
+              </tr>
+            </table>
+
+            <!-- FOOTER STRIP -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="border-top:1px solid #e2e8f0;padding:16px 48px;">
+                  <p style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                    color:#94a3b8;margin:0;line-height:1.7;">
+                    Email này được gửi tự động — vui lòng không trả lời trực tiếp.
+                  </p>
+                </td>
+              </tr>
+            </table>
+
           </td>
         </tr>
 
-        <!-- Footer -->
+        <!-- ── LEGAL FOOTER ───────────────────────────────────── -->
         <tr>
-          <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 32px;text-align:center;">
-            <p style="color:#9ca3af;font-size:12px;margin:0;">
-              Email này được gửi tự động từ hệ thống UNI BOM. Vui lòng không trả lời email này.<br/>
-              © ${new Date().getFullYear()} UNI Technology
+          <td align="center" style="padding:24px 0 0;">
+            <p style="font-family:Arial,Helvetica,sans-serif;font-size:11px;
+              color:#94a3b8;margin:0;">
+              © ${year} UNI Technology &nbsp;&nbsp;·&nbsp;&nbsp;
+              Hệ thống quản lý dự án nội bộ
             </p>
           </td>
         </tr>
 
       </table>
-    </td></tr>
-  </table>
+      <!-- ══ END OUTER SHELL ══════════════════════════════════════ -->
+
+    </td>
+  </tr>
+</table>
+
 </body>
 </html>`
 }
