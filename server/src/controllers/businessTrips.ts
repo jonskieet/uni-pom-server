@@ -142,8 +142,10 @@ export const createTrip = asyncHandler(async (req: Request, res: Response) => {
 
   if (!report_date) throw new AppError(400, 'Thiếu ngày báo cáo')
 
-  // Tính tổng chi phí từ items
-  const total_amount  = (items as any[]).reduce((s: number, i: any) => s + Number(i.total_price ?? 0), 0)
+  // Tính tổng chi phí: mỗi "item" (ngày công tác) chứa mảng expenses (các khoản chi trong ngày)
+  const dayTotal = (i: any) =>
+    Array.isArray(i.expenses) ? i.expenses.reduce((s: number, e: any) => s + Number(e.total_price ?? 0), 0) : Number(i.total_price ?? 0)
+  const total_amount  = (items as any[]).reduce((s: number, i: any) => s + dayTotal(i), 0)
   const return_amount = Number(advance_amount ?? 0) - total_amount
 
   // Tạo header
@@ -166,29 +168,27 @@ export const createTrip = asyncHandler(async (req: Request, res: Response) => {
   )
   const tripId = tripRows[0].id
 
-  // Tạo items
+  // Tạo items (mỗi item = 1 ngày công tác, chứa mảng expenses)
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
+    const expenses = Array.isArray(item.expenses) ? item.expenses : []
+    const itemTotal = expenses.reduce((s: number, e: any) => s + Number(e.total_price ?? Number(e.quantity ?? 1) * Number(e.unit_price ?? 0)), 0)
     await prisma.$executeRawUnsafe(
       `INSERT INTO business_trip_items
-         (trip_id, date, ward, province, content, location, description,
-          note, has_invoice, sale_person, tech_person, unit, quantity, unit_price, total_price, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         (trip_id, date, ward, province, content, location,
+          note, sale_person, tech_person, total_price, expenses, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
       tripId,
       item.date ? new Date(item.date) : null,
       item.ward        ?? null,
       item.province    ?? null,
       item.content     ?? null,
       item.location    ?? null,
-      item.description ?? null,
       item.note        ?? null,
-      Boolean(item.has_invoice),
       item.sale_person ?? null,
       item.tech_person ?? null,
-      item.unit        ?? 'Ngày',
-      Number(item.quantity   ?? 1),
-      Number(item.unit_price ?? 0),
-      Number(item.total_price ?? Number(item.quantity ?? 1) * Number(item.unit_price ?? 0)),
+      itemTotal,
+      JSON.stringify(expenses),
       i
     )
   }
@@ -218,7 +218,9 @@ export const updateTrip = asyncHandler(async (req: Request, res: Response) => {
   }
   if (existing[0].status === 'approved') throw new AppError(400, 'Không thể sửa báo cáo đã duyệt')
 
-  const total_amount  = (items as any[]).reduce((s: number, i: any) => s + Number(i.total_price ?? 0), 0)
+  const dayTotal = (i: any) =>
+    Array.isArray(i.expenses) ? i.expenses.reduce((s: number, e: any) => s + Number(e.total_price ?? 0), 0) : Number(i.total_price ?? 0)
+  const total_amount  = (items as any[]).reduce((s: number, i: any) => s + dayTotal(i), 0)
   const return_amount = Number(advance_amount ?? existing[0].advance_amount) - total_amount
 
   await prisma.$executeRawUnsafe(
@@ -239,20 +241,20 @@ export const updateTrip = asyncHandler(async (req: Request, res: Response) => {
   await prisma.$executeRawUnsafe(`DELETE FROM business_trip_items WHERE trip_id = $1`, Number(id))
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
+    const expenses = Array.isArray(item.expenses) ? item.expenses : []
+    const itemTotal = expenses.reduce((s: number, e: any) => s + Number(e.total_price ?? Number(e.quantity ?? 1) * Number(e.unit_price ?? 0)), 0)
     await prisma.$executeRawUnsafe(
       `INSERT INTO business_trip_items
-         (trip_id, date, ward, province, content, location, description,
-          note, has_invoice, sale_person, tech_person, unit, quantity, unit_price, total_price, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         (trip_id, date, ward, province, content, location,
+          note, sale_person, tech_person, total_price, expenses, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
       Number(id),
       item.date ? new Date(item.date) : null,
       item.ward ?? null, item.province ?? null, item.content ?? null,
-      item.location ?? null, item.description ?? null, item.note ?? null,
-      Boolean(item.has_invoice),
+      item.location ?? null, item.note ?? null,
       item.sale_person ?? null, item.tech_person ?? null,
-      item.unit ?? 'Ngày',
-      Number(item.quantity ?? 1), Number(item.unit_price ?? 0),
-      Number(item.total_price ?? Number(item.quantity ?? 1) * Number(item.unit_price ?? 0)),
+      itemTotal,
+      JSON.stringify(expenses),
       i
     )
   }
