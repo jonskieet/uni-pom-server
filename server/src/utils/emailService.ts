@@ -75,15 +75,61 @@ const BASE_CSS = `
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background-color:#F0F2F5; font-family:'Segoe UI',Arial,sans-serif; margin:0; padding:0; }
 a { color:inherit; }
-.priority-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.04em; white-space:nowrap; font-family:'Segoe UI',Arial,sans-serif; }
-.priority-high   { background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; }
-.priority-medium { background:#FFFBEB; color:#F59E0B; border:1px solid #FDE68A; }
-.priority-low    { background:#ECFDF5; color:#10B981; border:1px solid #A7F3D0; }
-.deleted-watermark { display:inline-block; background:#EF4444; color:#fff; font-size:10px; font-weight:700; letter-spacing:0.08em; padding:3px 10px; border-radius:999px; text-transform:uppercase; font-family:'Segoe UI',Arial,sans-serif; }
-.person-tag { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:999px; margin-top:5px; font-family:'Segoe UI',Arial,sans-serif; }
-.tag-from { background:#F3F4F6; color:#6B7280; }
-.tag-to   { background:#D1FAE5; color:#065F46; }
 `
+// LƯU Ý: .priority-badge / .deleted-watermark / .person-tag đã bị XOÁ khỏi CSS này.
+// Outlook (Word rendering engine) KHÔNG hỗ trợ display:inline-block — class nào dùng
+// thuộc tính này sẽ bị render thành block full-width (chính là lỗi bạn gặp).
+// → Ba thành phần này đã được chuyển thành table-based badge (xem priorityBadge,
+//   deletedWatermark, personTag bên dưới) để đảm bảo render đúng trên cả Gmail và Outlook.
+
+const PRIORITY_COLORS: Record<string, { bg: string; color: string; border: string }> = {
+  high:   { bg: '#FEF2F2', color: '#EF4444', border: '#FECACA' },
+  medium: { bg: '#FFFBEB', color: '#F59E0B', border: '#FDE68A' },
+  low:    { bg: '#ECFDF5', color: '#10B981', border: '#A7F3D0' },
+}
+
+// ── Priority badge (table-based, thay <span class="priority-badge">) ──
+// align="right" ép Outlook shrink-wrap table theo nội dung,
+// tránh bug "table không width sẽ stretch full chiều ngang" trên Outlook.
+function priorityBadge(label: string, cssClass: string): string {
+  const c = PRIORITY_COLORS[cssClass] ?? PRIORITY_COLORS.medium
+  return `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right">
+  <tr>
+    <td bgcolor="${c.bg}" align="center" valign="middle"
+        style="background-color:${c.bg}; border:1px solid ${c.border}; border-radius:999px; padding:3px 10px;
+               font-size:11px; font-weight:700; letter-spacing:0.04em; color:${c.color}; white-space:nowrap;
+               font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(label)}</td>
+  </tr>
+</table>`
+}
+
+// ── "Đã xóa" watermark badge (table-based, thay <span class="deleted-watermark">) ──
+function deletedWatermark(): string {
+  return `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" style="margin-bottom:10px;">
+  <tr>
+    <td bgcolor="#EF4444" align="center" valign="middle"
+        style="background-color:#EF4444; border-radius:999px; padding:3px 10px; font-size:10px; font-weight:700;
+               letter-spacing:0.08em; color:#ffffff; text-transform:uppercase; white-space:nowrap;
+               font-family:'Segoe UI',Arial,sans-serif;">Đã xóa</td>
+  </tr>
+</table>`
+}
+
+// ── Person tag "Người cũ" / "Người mới" (table-based, thay <span class="person-tag">) ──
+function personTag(text: string, variant: 'from' | 'to'): string {
+  const bg    = variant === 'from' ? '#F3F4F6' : '#D1FAE5'
+  const color = variant === 'from' ? '#6B7280' : '#065F46'
+  return `
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin-top:5px;">
+  <tr>
+    <td bgcolor="${bg}" align="center" valign="middle"
+        style="background-color:${bg}; border-radius:999px; padding:2px 8px; font-size:10px; font-weight:600;
+               color:${color}; white-space:nowrap; font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(text)}</td>
+  </tr>
+</table>`
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // SHARED BUILDING BLOCKS
@@ -121,7 +167,7 @@ function logoBlock(iconBgHex: string): string {
 // Dùng ký tự &#9679; (●) thay div tròn vì Outlook không support border-radius trên div
 function badgePill(text: string, bgHex: string, borderHex: string, dotColor: string): string {
   return `
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:14px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left" style="margin-bottom:14px;">
   <tr>
     <td bgcolor="${bgHex}"
         style="background-color:${bgHex}; border:1px solid ${borderHex}; border-radius:999px; padding:5px 14px;">
@@ -133,7 +179,8 @@ function badgePill(text: string, bgHex: string, borderHex: string, dotColor: str
       </table>
     </td>
   </tr>
-</table>`
+</table>
+<div style="clear:both; line-height:0; font-size:0;">&nbsp;</div>`
 }
 
 // ── Task card wrapper (table thay div) ────────────────────────────────
@@ -361,7 +408,7 @@ ${badgePill('Nhiệm vụ mới', BBDG, BORD, DOT)}
 <p style="font-size:14px;color:#c7d2fe;margin:0;line-height:1.5;font-family:'Segoe UI',Arial,sans-serif;">Kiểm tra chi tiết bên dưới và bắt đầu thực hiện ngay hôm nay.</p>`
 
   const taskContent = `
-${taskCardHeader(escapeHtml(p.taskTitle), `<span class="priority-badge priority-${pri.cssClass}">${pri.label}</span>`)}
+${taskCardHeader(escapeHtml(p.taskTitle), priorityBadge(pri.label, pri.cssClass))}
 ${p.description ? `<div style="font-size:13px;color:#6B7280;line-height:1.6;margin:12px 0 16px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(p.description)}</div>` : ''}
 ${metaGrid([
   ['Han hoan thanh', `<span style="color:#EF4444;font-weight:600;">${formatDueDate(p.dueDate)}</span>`],
@@ -472,7 +519,7 @@ ${badgePill('Thay đổi người thực hiện', BBDG, BORD, DOT)}
           </table>
           <div style="font-size:13px;font-weight:700;color:#111827;margin-top:8px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(p.oldAssigneeName)}</div>
           <div style="font-size:11px;color:#6B7280;margin-top:2px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(roleLabel(p.oldAssigneeRole))}</div>
-          <span class="person-tag tag-from">Người cũ</span>
+          ${personTag('Người cũ', 'from')}
         </td>
         <td width="16%" align="center" valign="middle">
           <div style="font-size:22px;color:#10B981;text-align:center;font-family:Arial,sans-serif;">&#8594;</div>
@@ -487,7 +534,7 @@ ${badgePill('Thay đổi người thực hiện', BBDG, BORD, DOT)}
           </table>
           <div style="font-size:13px;font-weight:700;color:#111827;margin-top:8px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(p.newAssigneeName)}</div>
           <div style="font-size:11px;color:#6B7280;margin-top:2px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(roleLabel(p.newAssigneeRole))}</div>
-          <span class="person-tag tag-to">Người mới</span>
+          ${personTag('Người mới', 'to')}
         </td>
       </tr>
     </table>
@@ -495,7 +542,7 @@ ${badgePill('Thay đổi người thực hiện', BBDG, BORD, DOT)}
 </table>`
 
   const taskContent = `
-${taskCardHeader(escapeHtml(p.taskTitle), `<span class="priority-badge priority-${pri.cssClass}">${pri.label}</span>`)}
+${taskCardHeader(escapeHtml(p.taskTitle), priorityBadge(pri.label, pri.cssClass))}
 ${p.description ? `<div style="font-size:13px;color:#6B7280;line-height:1.6;margin:12px 0 16px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(p.description)}</div>` : ''}
 ${metaGrid([
   ['Han hoan thanh', `<span style="color:#EF4444;font-weight:600;">${formatDueDate(p.dueDate)}</span>`],
@@ -570,7 +617,7 @@ ${badgePill('Nhiệm vụ đã xóa', BBDG, BORD, DOT)}
 <p style="font-size:14px;color:#fca5a5;margin:0;line-height:1.5;font-family:'Segoe UI',Arial,sans-serif;">Nhiệm vụ bạn đang thực hiện đã bị xóa khỏi hệ thống. Vui lòng liên hệ người quản lý nếu cần thêm thông tin.</p>`
 
   const taskContent = `
-<div style="text-align:right;margin-bottom:10px;"><span class="deleted-watermark">Đã xóa</span></div>
+${deletedWatermark()}
 <div style="font-size:17px;font-weight:700;color:#991B1B;line-height:1.35;text-decoration:line-through;opacity:0.8;margin-bottom:12px;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(p.taskTitle)}</div>
 ${p.description ? `<div style="font-size:13px;color:#9CA3AF;line-height:1.6;margin-bottom:16px;background:#FEF2F2;border:1px solid #FEE2E2;border-radius:10px;padding:12px 14px;text-decoration:line-through;font-family:'Segoe UI',Arial,sans-serif;">${escapeHtml(p.description)}</div>` : ''}
 ${metaGrid([
