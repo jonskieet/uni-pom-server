@@ -7,7 +7,7 @@ import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
-import { sendTaskAssignEmail } from '../utils/emailService'
+import { sendTaskAssignEmail, sendTaskReassignEmail, sendTaskDeleteEmail } from '../utils/emailService'
 
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
@@ -21,27 +21,36 @@ async function getPlanName(planId: number): Promise<string> {
   return rows[0]?.name ?? 'Không rõ'
 }
 
+// ── Helper: lấy tên bucket ───────────────────────────────────────────
+async function getBucketName(bucketId: number | null): Promise<string> {
+  if (!bucketId) return 'Chưa phân loại'
+  const rows = await prisma.$queryRaw<{ name: string }[]>`
+    SELECT name FROM buckets WHERE id = ${bucketId}
+  `
+  return rows[0]?.name ?? 'Chưa phân loại'
+}
+
 // ── Helper: gửi email cho danh sách assignee mới (bất đồng bộ) ───────
 function notifyAssignees(params: {
   newAssigneeIds: number[]
   assignerName: string
+  assignerRole?: string | null
+  taskId: number
   taskTitle: string
   planName: string
+  bucketName?: string | null
+  status?: string | null
   priority: string
   dueDate?: string | Date | null
   description?: string | null
 }) {
-  const { newAssigneeIds, assignerName, taskTitle, planName, priority, dueDate, description } = params
+  const { newAssigneeIds, assignerName, assignerRole, taskId, taskTitle, planName, bucketName, status, priority, dueDate, description } = params
   if (!newAssigneeIds.length) return
-  console.log('[Email] notifyAssignees called, ids:', newAssigneeIds) 
 
   // Chạy bất đồng bộ, không block response
   prisma.$queryRaw<{ id: number; email: string | null; full_name: string }[]>`
     SELECT id, email, full_name FROM users WHERE id = ANY(${newAssigneeIds}::int[])
   `.then(users => {
-    console.log('[Email] Users found:', users)                          // ← thêm
-    console.log('[Email] EMAIL_USER:', process.env.EMAIL_USER)         // ← thêm
-    console.log('[Email] EMAIL_PASS exists:', !!process.env.EMAIL_PASS) // ← thêm
     for (const u of users) {
       if (!u.email) {
         console.warn(`[Email] User #${u.id} (${u.full_name}) chưa có email — bỏ qua`)
@@ -50,15 +59,121 @@ function notifyAssignees(params: {
       sendTaskAssignEmail({
         toEmail: u.email,
         recipientName: u.full_name,
+        taskId,
         taskTitle,
         planName,
+        bucketName,
+        status,
         assignerName,
+        assignerRole,
         priority,
         dueDate: dueDate ? new Date(dueDate).toISOString() : null,
         description: description ?? null,
+        assignedDate: new Date(),
       })
     }
-  }).catch(err => console.error('[Email] Lỗi lấy thông tin user:', err))
+  }).catch(err => console.error('[Email] Lỗi lấy thông tin user (giao việc):', err))
+}
+
+// ── Helper: gửi email chuyển giao / đổi người thực hiện (bất đồng bộ) ─
+// addedIds:   những người mới được thêm vào (nhận vai "người mới")
+// removedIds: những người bị gỡ khỏi nhiệm vụ (nhận vai "người cũ")
+function notifyReassignment(params: {
+  addedIds: number[]
+  removedIds: number[]
+  changedByName: string
+  changedByRole?: string | null
+  taskId: number
+  taskTitle: string
+  planName: string
+  bucketName?: string | null
+  status?: string | null
+  priority: string
+  dueDate?: string | Date | null
+  description?: string | null
+}) {
+  const { addedIds, removedIds, changedByName, changedByRole, taskId, taskTitle, planName, bucketName, status, priority, dueDate, description } = params
+  if (!addedIds.length && !removedIds.length) return
+
+  const allIds = [...new Set([...addedIds, ...removedIds])]
+
+  prisma.$queryRaw<{ id: number; email: string | null; full_name: string; role: string }[]>`
+    SELECT id, email, full_name, role FROM users WHERE id = ANY(${allIds}::int[])
+  `.then(users => {
+    const byId = new Map(users.map(u => [u.id, u]))
+    const addedUsers   = addedIds.map(id => byId.get(id)).filter(Boolean) as typeof users
+    const removedUsers = removedIds.map(id => byId.get(id)).filter(Boolean) as typeof users
+
+    const newAssigneeName = addedUsers.length   ? addedUsers.map(u => u.full_name).join(', ')   : 'Chưa có người thay thế'
+    const oldAssigneeName = removedUsers.length ? removedUsers.map(u => u.full_name).join(', ') : 'Chưa có'
+    const newAssigneeRole = addedUsers.length === 1   ? addedUsers[0].role   : null
+    const oldAssigneeRole = removedUsers.length === 1 ? removedUsers[0].role : null
+    const changedDate = new Date()
+    const dueDateIso = dueDate ? new Date(dueDate).toISOString() : null
+
+    for (const u of addedUsers) {
+      if (!u.email) { console.warn(`[Email] User #${u.id} (${u.full_name}) chưa có email — bỏ qua`); continue }
+      sendTaskReassignEmail({
+        toEmail: u.email,
+        viewpoint: 'new',
+        recipientName: u.full_name,
+        oldAssigneeName, oldAssigneeRole,
+        newAssigneeName, newAssigneeRole,
+        taskId, taskTitle, description: description ?? null,
+        planName, bucketName, status, priority, dueDate: dueDateIso,
+        changedByName, changedByRole, changedDate,
+      })
+    }
+    for (const u of removedUsers) {
+      if (!u.email) { console.warn(`[Email] User #${u.id} (${u.full_name}) chưa có email — bỏ qua`); continue }
+      sendTaskReassignEmail({
+        toEmail: u.email,
+        viewpoint: 'old',
+        recipientName: u.full_name,
+        oldAssigneeName, oldAssigneeRole,
+        newAssigneeName, newAssigneeRole,
+        taskId, taskTitle, description: description ?? null,
+        planName, bucketName, status, priority, dueDate: dueDateIso,
+        changedByName, changedByRole, changedDate,
+      })
+    }
+  }).catch(err => console.error('[Email] Lỗi lấy thông tin user (chuyển giao):', err))
+}
+
+// ── Helper: gửi email báo xóa nhiệm vụ cho các assignee (bất đồng bộ) ─
+function notifyTaskDeleted(params: {
+  assignees: { id: number; email: string | null; full_name: string }[]
+  deletedByName: string
+  deletedByRole?: string | null
+  taskTitle: string
+  description?: string | null
+  planName: string
+  bucketName?: string | null
+  status?: string | null
+  dueDate?: string | Date | null
+}) {
+  const { assignees, deletedByName, deletedByRole, taskTitle, description, planName, bucketName, status, dueDate } = params
+  if (!assignees.length) return
+
+  const deletedDate = new Date()
+  const dueDateIso = dueDate ? new Date(dueDate).toISOString() : null
+
+  for (const u of assignees) {
+    if (!u.email) { console.warn(`[Email] User #${u.id} (${u.full_name}) chưa có email — bỏ qua`); continue }
+    sendTaskDeleteEmail({
+      toEmail: u.email,
+      recipientName: u.full_name,
+      taskTitle,
+      description: description ?? null,
+      planName,
+      bucketName,
+      status,
+      dueDate: dueDateIso,
+      deletedByName,
+      deletedByRole,
+      deletedDate,
+    })
+  }
 }
 
 // ── PLANS ─────────────────────────────────────────────────────────────
@@ -338,15 +453,19 @@ export const createTask = asyncHandler(async (req: Request, res: Response) => {
 
   // ── Gửi email thông báo cho các assignee ────────────────────────────
   if (assigneeIds.length > 0) {
-    const [assigner] = await prisma.$queryRaw<{ full_name: string }[]>`
-      SELECT full_name FROM users WHERE id = ${createdBy}
+    const [assigner] = await prisma.$queryRaw<{ full_name: string; role: string }[]>`
+      SELECT full_name, role FROM users WHERE id = ${createdBy}
     `
-    getPlanName(planIdInt).then(planName => {
+    Promise.all([getPlanName(planIdInt), getBucketName(bucketIdVal)]).then(([planName, bucketName]) => {
       notifyAssignees({
         newAssigneeIds: assigneeIds,
         assignerName: assigner?.full_name ?? 'Hệ thống',
+        assignerRole: assigner?.role ?? null,
+        taskId: task.id,
         taskTitle: title.trim(),
         planName,
+        bucketName,
+        status: statusVal,
         priority: priorityVal,
         dueDate: dueDateVal,
         description: description || null,
@@ -421,22 +540,44 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
       `
     }
 
-    // Chỉ gửi email cho người được thêm MỚI
-    const newlyAssignedIds = assigneeIds.filter(uid => !prevIds.has(uid))
-    if (newlyAssignedIds.length > 0) {
-      const [actor] = await prisma.$queryRaw<{ full_name: string }[]>`
-        SELECT full_name FROM users WHERE id = ${req.user!.id}
+    const newSet     = new Set(assigneeIds)
+    const addedIds    = assigneeIds.filter(uid => !prevIds.has(uid))
+    const removedIds  = [...prevIds].filter(uid => !newSet.has(uid))
+
+    if (addedIds.length > 0 || removedIds.length > 0) {
+      const [actor] = await prisma.$queryRaw<{ full_name: string; role: string }[]>`
+        SELECT full_name, role FROM users WHERE id = ${req.user!.id}
       `
-      getPlanName(cur.plan_id).then(planName => {
-        notifyAssignees({
-          newAssigneeIds: newlyAssignedIds,
-          assignerName: actor?.full_name ?? 'Hệ thống',
-          taskTitle: title,
-          planName,
-          priority,
-          dueDate: dueDate,
-          description,
-        })
+
+      Promise.all([getPlanName(cur.plan_id), getBucketName(bucketId)]).then(([planName, bucketName]) => {
+        if (addedIds.length > 0 && removedIds.length > 0) {
+          // Có người được thêm VÀ có người bị gỡ → đây là một lượt "đổi người" (reassign)
+          notifyReassignment({
+            addedIds, removedIds,
+            changedByName: actor?.full_name ?? 'Hệ thống',
+            changedByRole: actor?.role ?? null,
+            taskId: id, taskTitle: title, planName, bucketName, status, priority,
+            dueDate, description,
+          })
+        } else if (addedIds.length > 0) {
+          // Chỉ thêm người mới, không gỡ ai → email giao việc bình thường
+          notifyAssignees({
+            newAssigneeIds: addedIds,
+            assignerName: actor?.full_name ?? 'Hệ thống',
+            assignerRole: actor?.role ?? null,
+            taskId: id, taskTitle: title, planName, bucketName, status, priority,
+            dueDate, description,
+          })
+        } else if (removedIds.length > 0) {
+          // Chỉ gỡ người, không có người thay thế → vẫn báo cho người bị gỡ
+          notifyReassignment({
+            addedIds: [], removedIds,
+            changedByName: actor?.full_name ?? 'Hệ thống',
+            changedByRole: actor?.role ?? null,
+            taskId: id, taskTitle: title, planName, bucketName, status, priority,
+            dueDate, description,
+          })
+        }
       })
     }
   }
@@ -478,7 +619,43 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
 
 export const deleteTask = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
+
+  // Lấy thông tin nhiệm vụ + người được giao TRƯỚC khi xóa
+  // (xóa task sẽ cascade xóa luôn task_assignees nên phải lấy trước)
+  const [task] = await prisma.$queryRaw<any[]>`SELECT * FROM tasks WHERE id=${id}`
+  if (!task) throw new AppError(404, 'Nhiệm vụ không tồn tại')
+
+  const assignees = await prisma.$queryRaw<{ id: number; email: string | null; full_name: string }[]>`
+    SELECT u.id, u.email, u.full_name
+    FROM task_assignees ta
+    JOIN users u ON u.id = ta.user_id
+    WHERE ta.task_id = ${id}
+  `
+
+  const [deleter] = await prisma.$queryRaw<{ full_name: string; role: string }[]>`
+    SELECT full_name, role FROM users WHERE id = ${req.user!.id}
+  `
+
   await prisma.$executeRaw`DELETE FROM tasks WHERE id=${id}`
+
+  // ── Gửi email báo xóa nhiệm vụ cho các assignee (bất đồng bộ) ───────
+  if (assignees.length > 0) {
+    Promise.all([getPlanName(task.plan_id), getBucketName(task.bucket_id)]).then(([planName, bucketName]) => {
+      notifyTaskDeleted({
+        assignees,
+        deletedByName: deleter?.full_name ?? 'Hệ thống',
+        deletedByRole: deleter?.role ?? null,
+        taskTitle: task.title,
+        description: task.description,
+        planName,
+        bucketName,
+        status: task.status,
+        dueDate: task.due_date,
+      })
+    }).catch(err => console.error('[Email] Lỗi gửi email xóa nhiệm vụ:', err))
+  }
+  // ────────────────────────────────────────────────────────────────────
+
   res.json(successResponse(null, 'Đã xóa nhiệm vụ'))
 })
 
