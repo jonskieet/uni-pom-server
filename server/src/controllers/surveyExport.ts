@@ -13,9 +13,11 @@ import { Request, Response } from 'express'
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   AlignmentType, BorderStyle, WidthType, ShadingType, VerticalAlign,
+  ImageRun,
 } from 'docx'
 import { PrismaClient } from '@prisma/client'
 import { asyncHandler } from '../middleware/errorHandler'
+import sizeOf from 'image-size'
 
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
@@ -67,6 +69,50 @@ const run = (text: string, opts: any = {}) =>
 const para = (children: TextRun[], opts: any = {}) =>
   new Paragraph({ children, spacing: { before: 60, after: 60 }, ...opts })
 
+/**
+ * Tách text nhiều dòng (chứa \n) thành mảng TextRun có `break`.
+ * docx KHÔNG tự hiểu ký tự \n trong 1 TextRun — phải khai báo break
+ * tường minh, nếu không toàn bộ nội dung sẽ bị in dính liền thành
+ * một khối văn bản duy nhất.
+ */
+function multilineRuns(text: string, opts: any = {}): TextRun[] {
+  const lines = String(text ?? '').split(/\r?\n/)
+  return lines.flatMap((line, i) =>
+    i === 0 ? [run(line, opts)] : [run(line, { ...opts, break: 1 })]
+  )
+}
+
+const MAX_IMG_WIDTH_PX = 480
+
+/**
+ * Tải ảnh từ URL (vd. Supabase Storage public URL) về buffer và
+ * tạo ImageRun để nhúng trực tiếp vào docx, thay vì chỉ in URL ra text.
+ * Trả về null nếu tải lỗi (URL chết, không phải ảnh, mạng lỗi...).
+ */
+async function fetchImageRun(url: string): Promise<ImageRun | null> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const arrBuf = await res.arrayBuffer()
+    const buffer = Buffer.from(arrBuf)
+
+    const dim = sizeOf(buffer)
+    if (!dim.width || !dim.height) return null
+
+    const scale = dim.width > MAX_IMG_WIDTH_PX ? MAX_IMG_WIDTH_PX / dim.width : 1
+    const width = Math.round(dim.width * scale)
+    const height = Math.round(dim.height * scale)
+
+    return new ImageRun({
+      data: buffer,
+      transformation: { width, height },
+    })
+  } catch (err) {
+    console.error('[surveyExport] fetchImageRun failed for', url, err)
+    return null
+  }
+}
+
 /** Tiêu đề section lớn (mỗi field type='section' hoặc nhóm BASE_FIELDS) */
 function sectionHeading(text: string): Paragraph {
   return new Paragraph({
@@ -95,7 +141,9 @@ function fieldValue(value: any): Paragraph {
   return new Paragraph({
     spacing: { before: 0, after: 80 },
     indent: { left: 200 },
-    children: [run(display, { color: display === '—' ? '9E9E9E' : '212121' })],
+    children: display === '—'
+      ? [run(display, { color: '9E9E9E' })]
+      : multilineRuns(display, { color: '212121' }),
   })
 }
 
@@ -254,11 +302,11 @@ function renderCheckboxValue(value: any): Paragraph[] {
  * Duyệt qua FormField[] (schema), render từng field thành
  * mảng docx elements.  Không biết gì về cấu trúc form cụ thể.
  */
-function renderFields(
+async function renderFields(
   fields: FormField[],
   formData: Record<string, any>,
   skipKeys: string[] = []
-): (Paragraph | Table)[] {
+): Promise<(Paragraph | Table)[]> {
   const elements: (Paragraph | Table)[] = []
 
   for (const field of fields) {
@@ -286,7 +334,9 @@ function renderFields(
           new Paragraph({
             spacing: { before: 0, after: 80 },
             indent: { left: 200 },
-            children: [run(value || '—', { color: value ? '212121' : '9E9E9E' })],
+            children: value
+              ? multilineRuns(value, { color: '212121' })
+              : [run('—', { color: '9E9E9E' })],
           })
         )
         break
@@ -296,15 +346,24 @@ function renderFields(
         elements.push(...renderCheckboxValue(value))
         break
 
-      case 'image':
-        // Ảnh: chỉ ghi URL — embedding ảnh từ URL từ xa cần fetch riêng
+      case 'image': {
         elements.push(fieldLabel(field.label, field.required))
         if (value) {
-          elements.push(para([run('[Xem ảnh tại: ' + value + ']', { color: '1565C0', size: 18 })]))
+          const imgRun = await fetchImageRun(value)
+          if (imgRun) {
+            elements.push(new Paragraph({
+              spacing: { before: 0, after: 120 },
+              alignment: AlignmentType.CENTER,
+              children: [imgRun],
+            }))
+          } else {
+            elements.push(para([run('[Không tải được ảnh: ' + value + ']', { color: 'C62828', size: 18 })]))
+          }
         } else {
           elements.push(fieldValue(null))
         }
         break
+      }
 
       // text | number | date | select | radio → plain value
       default:
@@ -371,7 +430,68 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
   // Lọc bỏ BASE_FIELDS khỏi templateFields để tránh render 2 lần
   const customFields = templateFields.filter(f => !BASE_KEYS.includes(f.key))
 
-  // 3. Build document
+  // ── Nhận diện URL ảnh trong các giá trị text thô (form cũ / LAN
+  // hardcode không khai báo field type='image' nhưng vẫn lưu URL ảnh
+  // dạng chuỗi, vd. "Xem ảnh tại: https://...supabase.co/.../xxx.jpg") ──
+  const IMG_URL_RE = /(https?:\/\/\S+\.(?:png|jpe?g|webp|gif))/i
+
+  async function renderRawValue(k: string, v: any): Promise<(Paragraph | Table)[]> {
+    const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
+    if (Array.isArray(v)) {
+      if (v.length > 0 && typeof v[0] === 'object') {
+        const cols: TableColumn[] = Object.keys(v[0]).map(key => ({ key, label: key, type: 'text' }))
+        const syntheticField: FormField = {
+          id: k, type: 'table', label,
+          key: k, required: false, width: 100, columns: cols,
+        }
+        return [fieldLabel(syntheticField.label), renderTableField(syntheticField, v)]
+      }
+      return [fieldLabel(label), para([run(v.join(', ') || '—')])]
+    }
+
+    if (typeof v === 'object' && v !== null) {
+      return [
+        fieldLabel(label),
+        ...Object.entries(v).flatMap(([subK, subV]) => [
+          para([run(`${subK}: `, { bold: true }), run(String(subV) || '—')], { indent: { left: 200 } }),
+        ]),
+      ]
+    }
+
+    // Chuỗi text có chứa URL ảnh → fetch & nhúng ảnh thay vì chỉ in URL
+    const str = v !== undefined && v !== null ? String(v) : ''
+    const imgMatch = str.match(IMG_URL_RE)
+    if (imgMatch) {
+      const imgRun = await fetchImageRun(imgMatch[1])
+      if (imgRun) {
+        return [
+          fieldLabel(label),
+          new Paragraph({
+            spacing: { before: 0, after: 120 },
+            alignment: AlignmentType.CENTER,
+            children: [imgRun],
+          }),
+        ]
+      }
+      return [fieldLabel(label), para([run('[Không tải được ảnh: ' + imgMatch[1] + ']', { color: 'C62828', size: 18 })])]
+    }
+
+    return [fieldLabel(label), fieldValue(v)]
+  }
+
+  // 3. Render trước các phần phụ thuộc async (field schema + fallback),
+  //    rồi mới build Document — docx không hỗ trợ Promise trong children.
+  const customFieldElements = customFields.length > 0
+    ? await renderFields(customFields, fd)
+    : []
+
+  const fallbackKeys = Object.keys(fd).filter(k => !BASE_KEYS.includes(k))
+  const fallbackElements = customFields.length === 0 && fallbackKeys.length > 0
+    ? (await Promise.all(fallbackKeys.map(k => renderRawValue(k, fd[k])))).flat()
+    : []
+
+  // 4. Build document
   const doc = new Document({
     styles: {
       default: { document: { run: { font: FONT, size: 20 } } },
@@ -424,45 +544,20 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
         new Paragraph({ spacing: { before: 0, after: 0 }, children: [] }),
 
         // ── II. NỘI DUNG KHẢO SÁT (custom fields từ schema) ──
-        ...(customFields.length > 0
+        ...(customFieldElements.length > 0
           ? [
               sectionHeading('II. Nội dung khảo sát'),
-              ...renderFields(customFields, fd),
+              ...customFieldElements,
             ]
           : []
         ),
 
         // ── Fallback: nếu form_data có dữ liệu nhưng không có schema ──
         // (Form kiểu cũ / LAN hardcode lưu trực tiếp vào form_data)
-        ...(customFields.length === 0 && Object.keys(fd).filter(k => !BASE_KEYS.includes(k)).length > 0
+        ...(fallbackElements.length > 0
           ? [
               sectionHeading('II. Nội dung khảo sát'),
-              ...Object.entries(fd)
-                .filter(([k]) => !BASE_KEYS.includes(k))
-                .flatMap(([k, v]) => {
-                  if (Array.isArray(v)) {
-                    // Bảng: đoán columns từ keys của row đầu tiên
-                    if (v.length > 0 && typeof v[0] === 'object') {
-                      const cols: TableColumn[] = Object.keys(v[0]).map(key => ({ key, label: key, type: 'text' }))
-                      const syntheticField: FormField = {
-                        id: k, type: 'table', label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-                        key: k, required: false, width: 100, columns: cols,
-                      }
-                      return [fieldLabel(syntheticField.label), renderTableField(syntheticField, v)]
-                    }
-                    return [fieldLabel(k), para([run(v.join(', ') || '—')])]
-                  }
-                  if (typeof v === 'object' && v !== null) {
-                    // Object lồng nhau: render từng key con
-                    return [
-                      fieldLabel(k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())),
-                      ...Object.entries(v).flatMap(([subK, subV]) => [
-                        para([run(`${subK}: `, { bold: true }), run(String(subV) || '—')], { indent: { left: 200 } }),
-                      ]),
-                    ]
-                  }
-                  return [fieldLabel(k.replace(/_/g, ' ')), fieldValue(v)]
-                }),
+              ...fallbackElements,
             ]
           : []
         ),
@@ -470,7 +565,11 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
         // ── Ghi chú chung ─────────────────────────────────────
         ...(survey.general_note ? [
           sectionHeading('Ghi chú chung'),
-          para([run(survey.general_note, { color: '37474F' })], { indent: { left: 200 } }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            indent: { left: 200 },
+            children: multilineRuns(survey.general_note, { color: '37474F' }),
+          }),
         ] : []),
 
         // ── Chữ ký ────────────────────────────────────────────
