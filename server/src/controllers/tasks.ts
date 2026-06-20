@@ -189,6 +189,79 @@ async function getTaskParticipantIds(taskId: number): Promise<{ created_by: numb
   return { created_by: rows[0].created_by, participantIds }
 }
 
+// ── Helper: tạo thông báo TRONG APP khi giao task cho người mới ──────
+async function notifyAppAssignees(params: {
+  newAssigneeIds: number[]
+  assignerName: string
+  taskId: number
+  taskTitle: string
+}) {
+  const { newAssigneeIds, assignerName, taskId, taskTitle } = params
+  if (!newAssigneeIds.length) return
+  try {
+    await prisma.notification.createMany({
+      data: newAssigneeIds.map(uid => ({
+        user_id: uid,
+        task_id: taskId,
+        type: 'task_assigned',
+        title: `${assignerName} đã giao cho bạn một nhiệm vụ`,
+        message: `"${taskTitle}"`,
+      })),
+    })
+  } catch (err) { console.error('[Notify] Lỗi tạo thông báo giao việc:', err) }
+}
+
+// ── Helper: tạo thông báo TRONG APP khi đổi/gỡ người thực hiện ───────
+async function notifyAppReassignment(params: {
+  addedIds: number[]
+  removedIds: number[]
+  changedByName: string
+  taskId: number
+  taskTitle: string
+}) {
+  const { addedIds, removedIds, changedByName, taskId, taskTitle } = params
+  try {
+    const data: { user_id: number; task_id: number; type: string; title: string; message: string }[] = []
+    for (const uid of addedIds) {
+      data.push({
+        user_id: uid, task_id: taskId, type: 'task_assigned',
+        title: `${changedByName} đã giao cho bạn một nhiệm vụ`,
+        message: `"${taskTitle}"`,
+      })
+    }
+    for (const uid of removedIds) {
+      data.push({
+        user_id: uid, task_id: taskId, type: 'task_unassigned',
+        title: `${changedByName} đã gỡ bạn khỏi một nhiệm vụ`,
+        message: `"${taskTitle}"`,
+      })
+    }
+    if (data.length) await prisma.notification.createMany({ data })
+  } catch (err) { console.error('[Notify] Lỗi tạo thông báo đổi người:', err) }
+}
+
+// ── Helper: tạo thông báo TRONG APP khi xóa task ──────────────────────
+// Lưu ý: KHÔNG gắn task_id vì task đã bị xóa khỏi DB (FK task_id sẽ lỗi
+// hoặc bị cascade xóa luôn nếu task_id không tồn tại).
+async function notifyAppTaskDeleted(params: {
+  recipientIds: number[]
+  deletedByName: string
+  taskTitle: string
+}) {
+  const { recipientIds, deletedByName, taskTitle } = params
+  if (!recipientIds.length) return
+  try {
+    await prisma.notification.createMany({
+      data: recipientIds.map(uid => ({
+        user_id: uid,
+        type: 'task_deleted',
+        title: `${deletedByName} đã xóa một nhiệm vụ`,
+        message: `"${taskTitle}" không còn tồn tại`,
+      })),
+    })
+  } catch (err) { console.error('[Notify] Lỗi tạo thông báo xóa nhiệm vụ:', err) }
+}
+
 // ── PLANS ─────────────────────────────────────────────────────────────
 
 export const getPlans = asyncHandler(async (req: Request, res: Response) => {
@@ -483,6 +556,13 @@ export const createTask = asyncHandler(async (req: Request, res: Response) => {
     const [assigner] = await prisma.$queryRaw<{ full_name: string; role: string }[]>`
       SELECT full_name, role FROM users WHERE id = ${createdBy}
     `
+    // Thông báo trong app (đồng bộ ngay, không phải đợi email)
+    notifyAppAssignees({
+      newAssigneeIds: assigneeIds,
+      assignerName: assigner?.full_name ?? 'Hệ thống',
+      taskId: task.id,
+      taskTitle: title.trim(),
+    })
     Promise.all([getPlanName(planIdInt), getBucketName(bucketIdVal)]).then(([planName, bucketName]) => {
       notifyAssignees({
         newAssigneeIds: assigneeIds,
@@ -576,6 +656,13 @@ export const updateTask = asyncHandler(async (req: Request, res: Response) => {
         SELECT full_name, role FROM users WHERE id = ${req.user!.id}
       `
 
+      // Thông báo trong app (đồng bộ ngay)
+      notifyAppReassignment({
+        addedIds, removedIds,
+        changedByName: actor?.full_name ?? 'Hệ thống',
+        taskId: id, taskTitle: title,
+      })
+
       Promise.all([getPlanName(cur.plan_id), getBucketName(bucketId)]).then(([planName, bucketName]) => {
         if (addedIds.length > 0 && removedIds.length > 0) {
           // Có người được thêm VÀ có người bị gỡ → đây là một lượt "đổi người" (reassign)
@@ -664,6 +751,16 @@ export const deleteTask = asyncHandler(async (req: Request, res: Response) => {
   `
 
   await prisma.$executeRaw`DELETE FROM tasks WHERE id=${id}`
+
+  // ── Thông báo trong app cho các assignee + người tạo (trừ người vừa xóa) ─
+  const deletedById = req.user!.id
+  const recipientIds = [...new Set([task.created_by, ...assignees.map(a => a.id)])]
+    .filter(uid => uid !== deletedById)
+  notifyAppTaskDeleted({
+    recipientIds,
+    deletedByName: deleter?.full_name ?? 'Hệ thống',
+    taskTitle: task.title,
+  })
 
   // ── Gửi email báo xóa nhiệm vụ cho các assignee (bất đồng bộ) ───────
   if (assignees.length > 0) {
@@ -904,27 +1001,33 @@ export const addComment = asyncHandler(async (req: Request, res: Response) => {
   `
 
   // ── Thông báo cho những người liên quan khác trong task (trừ người vừa nhắn) ─
+  // Bọc try/catch riêng: nếu gửi thông báo lỗi (vd. DB chưa migrate cột task_id)
+  // thì vẫn không ảnh hưởng tới việc bình luận đã được thêm thành công.
   const recipientIds = participants.participantIds.filter(id => id !== userId)
   if (recipientIds.length) {
-    const [sender] = await prisma.$queryRaw<{ full_name: string }[]>`
-      SELECT full_name FROM users WHERE id = ${userId}
-    `
-    const [taskRow] = await prisma.$queryRaw<{ title: string }[]>`
-      SELECT title FROM tasks WHERE id = ${taskId}
-    `
-    const senderName = sender?.full_name ?? 'Một thành viên'
-    const taskTitle  = taskRow?.title ?? 'nhiệm vụ'
-    const preview     = content.trim().slice(0, 120)
+    try {
+      const [sender] = await prisma.$queryRaw<{ full_name: string }[]>`
+        SELECT full_name FROM users WHERE id = ${userId}
+      `
+      const [taskRow] = await prisma.$queryRaw<{ title: string }[]>`
+        SELECT title FROM tasks WHERE id = ${taskId}
+      `
+      const senderName = sender?.full_name ?? 'Một thành viên'
+      const taskTitle  = taskRow?.title ?? 'nhiệm vụ'
+      const preview     = content.trim().slice(0, 120)
 
-    await prisma.notification.createMany({
-      data: recipientIds.map(uid => ({
-        user_id: uid,
-        task_id: taskId,
-        type: 'task_comment',
-        title: `${senderName} đã nhắn tin trong "${taskTitle}"`,
-        message: preview,
-      })),
-    })
+      await prisma.notification.createMany({
+        data: recipientIds.map(uid => ({
+          user_id: uid,
+          task_id: taskId,
+          type: 'task_comment',
+          title: `${senderName} đã nhắn tin trong "${taskTitle}"`,
+          message: preview,
+        })),
+      })
+    } catch (err) {
+      console.error('[Planner] Lỗi tạo thông báo bình luận task:', err)
+    }
   }
 
   res.status(201).json(successResponse(comment, 'Đã thêm bình luận'))
