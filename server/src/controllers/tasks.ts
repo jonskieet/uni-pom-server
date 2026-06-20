@@ -176,6 +176,19 @@ function notifyTaskDeleted(params: {
   }
 }
 
+// ── Helper: lấy id của những người liên quan đến 1 task (người tạo + người được giao) ─
+async function getTaskParticipantIds(taskId: number): Promise<{ created_by: number; participantIds: number[] } | null> {
+  const rows = await prisma.$queryRaw<{ created_by: number }[]>`
+    SELECT created_by FROM tasks WHERE id = ${taskId}
+  `
+  if (!rows.length) return null
+  const assignees = await prisma.$queryRaw<{ user_id: number }[]>`
+    SELECT user_id FROM task_assignees WHERE task_id = ${taskId}
+  `
+  const participantIds = [...new Set([rows[0].created_by, ...assignees.map(a => a.user_id)])]
+  return { created_by: rows[0].created_by, participantIds }
+}
+
 // ── PLANS ─────────────────────────────────────────────────────────────
 
 export const getPlans = asyncHandler(async (req: Request, res: Response) => {
@@ -330,7 +343,10 @@ export const getTasks = asyncHandler(async (req: Request, res: Response) => {
   const assignedToF  = assigned_to ? parseInt(assigned_to as string) : null
   const statusF      = (status  as string) || null
   const priorityF    = (priority as string) || null
+  const userId       = req.user!.id
 
+  // Quyền riêng tư: bucket dùng chung (public) nhưng mỗi task chỉ hiển thị
+  // với người tạo ra nó hoặc người được giao (assignee) của task đó.
   const tasks = await prisma.$queryRaw<any[]>`
     SELECT
       t.*,
@@ -353,6 +369,10 @@ export const getTasks = asyncHandler(async (req: Request, res: Response) => {
     LEFT JOIN task_assignees ta ON ta.task_id = t.id
     LEFT JOIN users au ON au.id = ta.user_id
     WHERE t.plan_id = ${planId}
+      AND (
+        t.created_by = ${userId}
+        OR EXISTS (SELECT 1 FROM task_assignees me WHERE me.task_id = t.id AND me.user_id = ${userId})
+      )
       AND (${assignedToF}::int    IS NULL OR EXISTS (
             SELECT 1 FROM task_assignees x WHERE x.task_id = t.id AND x.user_id = ${assignedToF}::int
           ))
@@ -366,6 +386,7 @@ export const getTasks = asyncHandler(async (req: Request, res: Response) => {
 
 export const getTask = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
+  const userId = req.user!.id
 
   const rows = await prisma.$queryRaw<any[]>`
     SELECT
@@ -379,6 +400,12 @@ export const getTask = asyncHandler(async (req: Request, res: Response) => {
     WHERE t.id = ${id}
   `
   if (!rows.length) throw new AppError(404, 'Nhiệm vụ không tồn tại')
+
+  // Quyền riêng tư: chỉ người tạo hoặc người được giao mới được xem chi tiết task
+  const participants = await getTaskParticipantIds(id)
+  if (!participants || !participants.participantIds.includes(userId)) {
+    throw new AppError(403, 'Bạn không có quyền xem nhiệm vụ này')
+  }
 
   const checklists = await prisma.$queryRaw`
     SELECT * FROM task_checklists WHERE task_id=${id} ORDER BY sort_order, id
@@ -842,6 +869,13 @@ export const deleteChecklist = asyncHandler(async (req: Request, res: Response) 
 
 export const getComments = asyncHandler(async (req: Request, res: Response) => {
   const taskId = parseInt(req.params.taskId)
+  const userId = req.user!.id
+
+  const participants = await getTaskParticipantIds(taskId)
+  if (!participants || !participants.participantIds.includes(userId)) {
+    throw new AppError(403, 'Bạn không có quyền xem nhiệm vụ này')
+  }
+
   const comments = await prisma.$queryRaw`
     SELECT cm.*, u.full_name, u.avatar_url
     FROM task_comments cm
@@ -858,11 +892,41 @@ export const addComment = asyncHandler(async (req: Request, res: Response) => {
   const { content } = req.body
   if (!content?.trim()) throw new AppError(400, 'Nội dung không được để trống')
 
+  const participants = await getTaskParticipantIds(taskId)
+  if (!participants || !participants.participantIds.includes(userId)) {
+    throw new AppError(403, 'Bạn không có quyền bình luận trong nhiệm vụ này')
+  }
+
   const [comment] = await prisma.$queryRaw<any[]>`
     INSERT INTO task_comments (task_id, user_id, content)
     VALUES (${taskId}, ${userId}, ${content.trim()})
     RETURNING *
   `
+
+  // ── Thông báo cho những người liên quan khác trong task (trừ người vừa nhắn) ─
+  const recipientIds = participants.participantIds.filter(id => id !== userId)
+  if (recipientIds.length) {
+    const [sender] = await prisma.$queryRaw<{ full_name: string }[]>`
+      SELECT full_name FROM users WHERE id = ${userId}
+    `
+    const [taskRow] = await prisma.$queryRaw<{ title: string }[]>`
+      SELECT title FROM tasks WHERE id = ${taskId}
+    `
+    const senderName = sender?.full_name ?? 'Một thành viên'
+    const taskTitle  = taskRow?.title ?? 'nhiệm vụ'
+    const preview     = content.trim().slice(0, 120)
+
+    await prisma.notification.createMany({
+      data: recipientIds.map(uid => ({
+        user_id: uid,
+        task_id: taskId,
+        type: 'task_comment',
+        title: `${senderName} đã nhắn tin trong "${taskTitle}"`,
+        message: preview,
+      })),
+    })
+  }
+
   res.status(201).json(successResponse(comment, 'Đã thêm bình luận'))
 })
 
