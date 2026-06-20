@@ -137,7 +137,7 @@ export const getTripById = asyncHandler(async (req: Request, res: Response) => {
 export const createTrip = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user!.id
   const {
-    report_date, time_period, advance_amount, note, items = []
+    report_date, time_period, advance_amount, note, payment_method, items = []
   } = req.body
 
   if (!report_date) throw new AppError(400, 'Thiếu ngày báo cáo')
@@ -151,15 +151,16 @@ export const createTrip = asyncHandler(async (req: Request, res: Response) => {
   // Tạo header
   await prisma.$executeRawUnsafe(
     `INSERT INTO business_trips
-       (user_id, report_date, time_period, advance_amount, total_amount, return_amount, note)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       (user_id, report_date, time_period, advance_amount, total_amount, return_amount, note, payment_method)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     userId,
     new Date(report_date),
     time_period ?? null,
     Number(advance_amount ?? 0),
     total_amount,
     return_amount,
-    note ?? null
+    note ?? null,
+    payment_method === 'transfer' ? 'transfer' : 'cash'
   )
 
   // Lấy id vừa tạo
@@ -207,7 +208,7 @@ export const updateTrip = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params
   const userId = req.user!.id
   const role   = req.user!.role
-  const { report_date, time_period, advance_amount, note, items = [] } = req.body
+  const { report_date, time_period, advance_amount, note, payment_method, items = [] } = req.body
 
   const existing = await prisma.$queryRawUnsafe<any[]>(
     `SELECT * FROM business_trips WHERE id = $1`, Number(id)
@@ -226,14 +227,15 @@ export const updateTrip = asyncHandler(async (req: Request, res: Response) => {
   await prisma.$executeRawUnsafe(
     `UPDATE business_trips
      SET report_date = $1, time_period = $2, advance_amount = $3,
-         total_amount = $4, return_amount = $5, note = $6, updated_at = NOW()
-     WHERE id = $7`,
+         total_amount = $4, return_amount = $5, note = $6, payment_method = $7, updated_at = NOW()
+     WHERE id = $8`,
     report_date ? new Date(report_date) : existing[0].report_date,
     time_period ?? existing[0].time_period,
     Number(advance_amount ?? existing[0].advance_amount),
     total_amount,
     return_amount,
     note ?? existing[0].note,
+    payment_method === 'transfer' || payment_method === 'cash' ? payment_method : existing[0].payment_method,
     Number(id)
   )
 

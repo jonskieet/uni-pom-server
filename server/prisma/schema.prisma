@@ -50,6 +50,12 @@ model User {
   attendances   Attendance[]
   businessTrips BusinessTrip[]
 
+  // Thông tin ngân hàng — dùng cho QR chuyển khoản công tác phí
+  bank_bin          String?
+  bank_short        String?
+  bank_account_no   String?
+  bank_account_name String?
+
   @@index([username])
   @@index([role])
   @@map("users")
@@ -460,6 +466,7 @@ model BusinessTrip {
   return_amount   Decimal  @default(0)     // Hoàn tạm ứng = Tạm ứng - Tổng chi
   status          String   @default("pending") // pending | approved | rejected
   note            String?
+  payment_method  String   @default("cash")    // cash | transfer
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 

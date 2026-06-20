@@ -11,7 +11,10 @@ import {
   updateAvatar,
   updateEmail,
   deleteUser,
-  resetPassword
+  resetPassword,
+  getBankInfo,
+  saveBankInfo,
+  getBankInfoByUserId,
 } from '../controllers/users'
 import { authMiddleware, adminOnly } from '../middleware/auth'
 
@@ -19,6 +22,13 @@ const router = Router()
 
 router.use(authMiddleware)
 router.get('/', getUsers)
+
+// ── Thông tin ngân hàng (QR chuyển khoản) ──────────────────────
+// Đặt TRƯỚC '/:id' vì đây là route tĩnh, tránh bị '/:id' nuốt mất
+router.get('/bank-info', getBankInfo)
+router.put('/bank-info', saveBankInfo)
+router.get('/:userId/bank-info', getBankInfoByUserId)
+
 router.get('/:id', getUserById)
 router.post('/', adminOnly, createUser)
 router.put('/:id', adminOnly, updateUser)

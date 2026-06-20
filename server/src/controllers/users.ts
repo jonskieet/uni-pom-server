@@ -242,3 +242,91 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
 
   res.json(successResponse(null, 'Đặt lại mật khẩu thành công'))
 })
+
+// ============================================================
+// Thông tin ngân hàng (QR chuyển khoản công tác phí)
+// ============================================================
+
+/**
+ * GET /users/bank-info — Lấy thông tin ngân hàng của user hiện tại
+ */
+export const getBankInfo = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id
+
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: {
+      bank_bin: true,
+      bank_short: true,
+      bank_account_no: true,
+      bank_account_name: true,
+    }
+  })
+
+  if (!user.bank_bin || !user.bank_account_no || !user.bank_account_name) {
+    res.json(successResponse(null))
+    return
+  }
+
+  res.json(successResponse({
+    bank_bin: user.bank_bin,
+    bank_short: user.bank_short,
+    account_number: user.bank_account_no,
+    account_name: user.bank_account_name,
+  }))
+})
+
+/**
+ * PUT /users/bank-info — Lưu/cập nhật thông tin ngân hàng của user hiện tại
+ * Body: { bank_bin, bank_short, account_number, account_name }
+ */
+export const saveBankInfo = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id
+  const { bank_bin, bank_short, account_number, account_name } = req.body
+
+  if (!bank_bin || !account_number || !account_name) {
+    throw new AppError(400, 'bank_bin, account_number và account_name là bắt buộc')
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      bank_bin,
+      bank_short: bank_short ?? null,
+      bank_account_no: account_number,
+      bank_account_name: account_name,
+      updated_at: new Date(),
+    }
+  })
+
+  res.json(successResponse({ success: true }, 'Đã lưu thông tin ngân hàng'))
+})
+
+/**
+ * GET /users/:userId/bank-info — Lấy thông tin ngân hàng của 1 nhân viên (dùng ở trang Admin)
+ */
+export const getBankInfoByUserId = asyncHandler(async (req: Request, res: Response) => {
+  const userId = parseInt(req.params.userId)
+
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: {
+      bank_bin: true,
+      bank_short: true,
+      bank_account_no: true,
+      bank_account_name: true,
+    }
+  })
+
+  if (!user.bank_bin || !user.bank_account_no || !user.bank_account_name) {
+    res.json(successResponse(null))
+    return
+  }
+
+  res.json(successResponse({
+    bank_bin: user.bank_bin,
+    bank_short: user.bank_short,
+    account_number: user.bank_account_no,
+    account_name: user.bank_account_name,
+  }))
+})
