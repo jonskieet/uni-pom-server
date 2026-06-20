@@ -467,6 +467,9 @@ model BusinessTrip {
   status          String   @default("pending") // pending | approved | rejected
   note            String?
   payment_method  String   @default("cash")    // cash | transfer
+  is_paid         Boolean  @default(false)      // đã chuyển khoản / chi trả xong
+  paid_at         DateTime?
+  paid_by         Int?
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 

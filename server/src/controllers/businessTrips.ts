@@ -307,3 +307,22 @@ export const rejectTrip = asyncHandler(async (req: Request, res: Response) => {
   )
   res.json(successResponse(null, 'Đã từ chối báo cáo'))
 })
+
+// ── PUT /business-trips/:id/mark-paid — Xác nhận đã chuyển khoản ─────────────
+export const markTripPaid = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const userId = req.user!.id
+
+  const existing = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id, status, is_paid FROM business_trips WHERE id = $1`, Number(id)
+  )
+  if (!existing.length) throw new AppError(404, 'Không tìm thấy báo cáo')
+  if (existing[0].status !== 'approved') throw new AppError(400, 'Chỉ có thể xác nhận chuyển khoản cho báo cáo đã duyệt')
+  if (existing[0].is_paid) throw new AppError(400, 'Báo cáo này đã được xác nhận chuyển khoản trước đó')
+
+  await prisma.$executeRawUnsafe(
+    `UPDATE business_trips SET is_paid = TRUE, paid_at = NOW(), paid_by = $1, updated_at = NOW() WHERE id = $2`,
+    userId, Number(id)
+  )
+  res.json(successResponse(null, 'Đã xác nhận chuyển khoản'))
+})
