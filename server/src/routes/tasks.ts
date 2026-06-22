@@ -7,6 +7,7 @@ import { Router } from 'express'
 import { authMiddleware, anyRole } from '../middleware/auth'
 import {
   getPlans, createPlan, updatePlan, deletePlan,
+  getPlanMembers, addPlanMembers, removePlanMember,
   getBuckets, createBucket, updateBucket, deleteBucket, reorderBuckets,
   getTasks, getTask, createTask, updateTask, deleteTask, reorderTask, copyTask,
   addChecklist, toggleChecklist, deleteChecklist, updateChecklist,
@@ -24,6 +25,12 @@ router.get('/plans',        getPlans)
 router.post('/plans',       anyRole, createPlan)
 router.put('/plans/:id',    anyRole, updatePlan)
 router.delete('/plans/:id', anyRole, deletePlan)
+
+// ── Plan Members (Team) ──────────────────────────────────────
+router.get('/plans/:planId/members',                 getPlanMembers)
+router.post('/plans/:planId/members',                 anyRole, addPlanMembers)
+router.delete('/plans/:planId/members/:userId',       anyRole, removePlanMember)
+
 
 // ── Buckets ────────────────────────────────────────────────
 router.get('/plans/:planId/buckets',   getBuckets)

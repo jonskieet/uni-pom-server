@@ -265,6 +265,9 @@ async function notifyAppTaskDeleted(params: {
 // ── PLANS ─────────────────────────────────────────────────────────────
 
 export const getPlans = asyncHandler(async (req: Request, res: Response) => {
+  const userId  = req.user!.id
+  const isAdmin = req.user!.role === 'admin'
+
   const plans = await prisma.$queryRaw<any[]>`
     SELECT
       p.*,
@@ -272,11 +275,24 @@ export const getPlans = asyncHandler(async (req: Request, res: Response) => {
       COUNT(DISTINCT t.id)::int                                     AS task_count,
       COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END)::int AS completed_count,
       COUNT(DISTINCT CASE WHEN t.status = 'in_progress' THEN t.id END)::int AS in_progress_count,
-      COUNT(DISTINCT CASE WHEN t.due_date < NOW() AND t.status NOT IN ('completed','deferred') THEN t.id END)::int AS overdue_count
+      COUNT(DISTINCT CASE WHEN t.due_date < NOW() AND t.status NOT IN ('completed','deferred') THEN t.id END)::int AS overdue_count,
+      COUNT(DISTINCT pm.user_id)::int                               AS member_count,
+      COALESCE(
+        json_agg(DISTINCT jsonb_build_object(
+          'id', mu.id, 'full_name', mu.full_name, 'avatar_url', mu.avatar_url, 'role', mu.role
+        )) FILTER (WHERE mu.id IS NOT NULL),
+        '[]'
+      )                                                              AS members
     FROM plans p
     LEFT JOIN users u ON u.id = p.created_by
     LEFT JOIN tasks t ON t.plan_id = p.id
+    LEFT JOIN plan_members pm ON pm.plan_id = p.id
+    LEFT JOIN users mu ON mu.id = pm.user_id
     WHERE p.is_active = true
+      AND (
+        ${isAdmin} = true
+        OR EXISTS (SELECT 1 FROM plan_members me WHERE me.plan_id = p.id AND me.user_id = ${userId})
+      )
     GROUP BY p.id, u.full_name
     ORDER BY p.created_at DESC
   `
@@ -284,13 +300,19 @@ export const getPlans = asyncHandler(async (req: Request, res: Response) => {
 })
 
 export const createPlan = asyncHandler(async (req: Request, res: Response) => {
-  const { name, description } = req.body
+  const { name, description, plan_type, member_ids } = req.body
   const createdBy = req.user!.id
   if (!name?.trim()) throw new AppError(400, 'Tên kế hoạch không được để trống')
 
+  const planType: 'team' | 'personal' = plan_type === 'personal' ? 'personal' : 'team'
+  // Kế hoạch cá nhân không có thành viên khác ngoài chủ sở hữu
+  const memberIds: number[] = planType === 'team' && Array.isArray(member_ids)
+    ? [...new Set(member_ids.map((x: any) => parseInt(x)).filter((x: number) => !!x && x !== createdBy))]
+    : []
+
   const [plan] = await prisma.$queryRaw<any[]>`
-    INSERT INTO plans (name, description, created_by, created_at, updated_at)
-    VALUES (${name.trim()}, ${description || null}, ${createdBy}, NOW(), NOW())
+    INSERT INTO plans (name, description, created_by, plan_type, created_at, updated_at)
+    VALUES (${name.trim()}, ${description || null}, ${createdBy}, ${planType}, NOW(), NOW())
     RETURNING *
   `
 
@@ -302,16 +324,36 @@ export const createPlan = asyncHandler(async (req: Request, res: Response) => {
     (${plan.id}, 'Hoàn thành',      2)
   `
 
+  // Người tạo luôn là owner
+  await prisma.$executeRaw`
+    INSERT INTO plan_members (plan_id, user_id, role) VALUES (${plan.id}, ${createdBy}, 'owner')
+    ON CONFLICT DO NOTHING
+  `
+  // Thêm các thành viên ban đầu (nếu là kế hoạch nhóm)
+  if (memberIds.length) {
+    await prisma.$executeRaw`
+      INSERT INTO plan_members (plan_id, user_id, role)
+      SELECT ${plan.id}, u.id, 'member' FROM users u WHERE u.id = ANY(${memberIds}::int[])
+      ON CONFLICT DO NOTHING
+    `
+  }
+
   res.status(201).json(successResponse(plan, 'Đã tạo kế hoạch'))
 })
 
 export const updatePlan = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
-  const { name, description } = req.body
+  const { name, description, plan_type } = req.body
   if (!name?.trim()) throw new AppError(400, 'Tên kế hoạch không được để trống')
 
+  const planType: 'team' | 'personal' | null = plan_type === 'team' || plan_type === 'personal' ? plan_type : null
+
   const rows = await prisma.$queryRaw<any[]>`
-    UPDATE plans SET name=${name.trim()}, description=${description ?? null}, updated_at=NOW()
+    UPDATE plans SET
+      name=${name.trim()},
+      description=${description ?? null},
+      plan_type=COALESCE(${planType}, plan_type),
+      updated_at=NOW()
     WHERE id=${id} AND is_active=true
     RETURNING *
   `
@@ -324,6 +366,60 @@ export const deletePlan = asyncHandler(async (req: Request, res: Response) => {
   // Soft delete
   await prisma.$executeRaw`UPDATE plans SET is_active=false WHERE id=${id}`
   res.json(successResponse(null, 'Đã xóa kế hoạch'))
+})
+
+// ── PLAN MEMBERS ──────────────────────────────────────────────────────
+
+export const getPlanMembers = asyncHandler(async (req: Request, res: Response) => {
+  const planId = parseInt(req.params.planId)
+  const members = await prisma.$queryRaw<any[]>`
+    SELECT u.id, u.full_name, u.avatar_url, u.role, pm.role AS member_role, pm.added_at
+    FROM plan_members pm
+    JOIN users u ON u.id = pm.user_id
+    WHERE pm.plan_id = ${planId}
+    ORDER BY (pm.role = 'owner') DESC, u.full_name
+  `
+  res.json(successResponse(members))
+})
+
+export const addPlanMembers = asyncHandler(async (req: Request, res: Response) => {
+  const planId = parseInt(req.params.planId)
+  const { user_ids } = req.body
+  if (!Array.isArray(user_ids) || !user_ids.length) {
+    throw new AppError(400, 'Vui lòng chọn người để thêm vào nhóm')
+  }
+  const planRows = await prisma.$queryRaw<any[]>`SELECT * FROM plans WHERE id=${planId} AND is_active=true`
+  if (!planRows.length) throw new AppError(404, 'Kế hoạch không tồn tại')
+  if (planRows[0].plan_type === 'personal') {
+    throw new AppError(400, 'Kế hoạch cá nhân không thể thêm thành viên')
+  }
+
+  const ids = [...new Set(user_ids.map((x: any) => parseInt(x)).filter(Boolean))]
+  await prisma.$executeRaw`
+    INSERT INTO plan_members (plan_id, user_id, role)
+    SELECT ${planId}, u.id, 'member' FROM users u WHERE u.id = ANY(${ids}::int[])
+    ON CONFLICT DO NOTHING
+  `
+  const members = await prisma.$queryRaw<any[]>`
+    SELECT u.id, u.full_name, u.avatar_url, u.role, pm.role AS member_role, pm.added_at
+    FROM plan_members pm JOIN users u ON u.id = pm.user_id
+    WHERE pm.plan_id = ${planId}
+    ORDER BY (pm.role = 'owner') DESC, u.full_name
+  `
+  res.status(201).json(successResponse(members, 'Đã thêm thành viên'))
+})
+
+export const removePlanMember = asyncHandler(async (req: Request, res: Response) => {
+  const planId = parseInt(req.params.planId)
+  const userId = parseInt(req.params.userId)
+  const rows = await prisma.$queryRaw<any[]>`
+    SELECT role FROM plan_members WHERE plan_id=${planId} AND user_id=${userId}
+  `
+  if (!rows.length) throw new AppError(404, 'Người này không phải thành viên của kế hoạch')
+  if (rows[0].role === 'owner') throw new AppError(400, 'Không thể xóa chủ sở hữu kế hoạch')
+
+  await prisma.$executeRaw`DELETE FROM plan_members WHERE plan_id=${planId} AND user_id=${userId}`
+  res.json(successResponse(null, 'Đã xóa thành viên'))
 })
 
 // ── BUCKETS ───────────────────────────────────────────────────────────
