@@ -9,8 +9,6 @@ import {
   checkOut,
   getTodayStatus,
   getStats,
-  getWorkHours,
-  setWorkHours,
 } from '../controllers/attendance'
 
 const router = Router()
@@ -20,13 +18,11 @@ router.use(authMiddleware)
 // Nhân viên (mọi role trừ admin)
 router.get('/my',    anyRole,           getMyAttendance)
 router.get('/today', anyRole,           getTodayStatus)
-router.get('/work-hours', anyRole,      getWorkHours)
 router.post('/check-in',  anyRole,      checkIn)
 router.post('/check-out', anyRole,      checkOut)
 
 // Kế toán + Admin
 router.get('/',       keToansAndAdmin,  getAllAttendance)
 router.get('/stats',  keToansAndAdmin,  getStats)
-router.put('/work-hours', keToansAndAdmin, setWorkHours)
 
 export default router
