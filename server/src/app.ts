@@ -24,6 +24,7 @@ import plannerRoutes from './routes/tasks'
 import attendanceRoutes from './routes/attendance'       // ← MỚI
 import businessTripsRoutes from './routes/businessTrips' // ← MỚI
 import leaveRequestsRoutes from './routes/leaveRequests' // ← MỚI
+import scheduleRoutes      from './routes/schedule'       // ← MỚI
 
 export function createApp(): Express {
   const app = express()
@@ -61,6 +62,7 @@ export function createApp(): Express {
   app.use('/api/attendance',     attendanceRoutes)       // ← MỚI
   app.use('/api/business-trips', businessTripsRoutes)    // ← MỚI
   app.use('/api/leave-requests', leaveRequestsRoutes)    // ← MỚI
+  app.use('/api/schedule',       scheduleRoutes)          // ← MỚI
 
   app.use(notFoundHandler)
   app.use(errorHandler)

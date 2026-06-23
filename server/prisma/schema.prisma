@@ -50,6 +50,10 @@ model User {
   attendances   Attendance[]
   businessTrips BusinessTrip[]
 
+  // Relations lịch tuần
+  createdScheduleEvents   ScheduleEvent[]     @relation("ScheduleEventCreator")
+  scheduledEventUsers     ScheduleEventUser[] @relation("ScheduleEventUsers")
+
   // Thông tin ngân hàng — dùng cho QR chuyển khoản công tác phí
   bank_bin          String?
   bank_short        String?
@@ -510,3 +514,40 @@ model BusinessTripItem {
   @@map("business_trip_items")
 }
 
+
+// ============================================================
+// SCHEDULE EVENTS — Module Lịch tuần
+// Thay thế bảng trắng thủ công của công ty
+// ============================================================
+model ScheduleEvent {
+  id          Int      @id @default(autoincrement())
+  title       String   @db.VarChar(300)
+  description String?
+  date        DateTime @db.Date
+  start_time  String?  @db.VarChar(5)   // "HH:MM"
+  end_time    String?  @db.VarChar(5)   // "HH:MM"
+  category    String   @default("other") // meeting | trip | task | deadline | other
+  priority    String   @default("medium") // high | medium | low
+  location    String?  @db.VarChar(300)
+  created_by  Int
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  creator       User                 @relation("ScheduleEventCreator", fields: [created_by], references: [id], onDelete: Restrict)
+  assignedUsers ScheduleEventUser[]
+
+  @@index([date])
+  @@index([created_by])
+  @@map("schedule_events")
+}
+
+model ScheduleEventUser {
+  event_id Int
+  user_id  Int
+
+  event ScheduleEvent @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  user  User          @relation("ScheduleEventUsers", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([event_id, user_id])
+  @@map("schedule_event_users")
+}
