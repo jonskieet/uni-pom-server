@@ -23,6 +23,7 @@ router.use(authMiddleware)
 router.get('/balances/my',      anyRole,          getMyBalance)
 router.get('/balances',         keToansAndAdmin,  getAllBalances)
 router.put('/balances/:userId', keToansAndAdmin,  setBalance)
+router.put('/recalculate-balances', keToansAndAdmin, recalculateBalances)
 
 // Nhân viên: tạo / xem / sửa / hủy đơn của mình
 router.get('/my',        anyRole,          getMyLeaveRequests)
@@ -34,6 +35,5 @@ router.delete('/:id',    anyRole,          cancelLeaveRequest)
 router.get('/',                keToansAndAdmin, getAllLeaveRequests)
 router.put('/:id/approve',     keToansAndAdmin, approveLeaveRequest)
 router.put('/:id/reject',      keToansAndAdmin, rejectLeaveRequest)
-router.put('/recalculate-balances', keToansAndAdmin, recalculateBalances)
 
 export default router

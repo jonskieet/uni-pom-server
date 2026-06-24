@@ -355,27 +355,6 @@ export const getAllBalances = asyncHandler(async (req: Request, res: Response) =
   res.json(successResponse(rows))
 })
 
-// ── PUT /leave-requests/balances/:userId — Cấu hình quỹ phép năm (ke_toan/admin) ─
-export const setBalance = asyncHandler(async (req: Request, res: Response) => {
-  const { userId } = req.params
-  const { year, total_days } = req.body ?? {}
-
-  const y = Number(year) || new Date().getFullYear()
-  if (total_days === undefined || isNaN(Number(total_days)) || Number(total_days) < 0) {
-    throw new AppError(400, 'Số ngày nghỉ phép có lương không hợp lệ')
-  }
-
-  await prisma.$executeRawUnsafe(
-    `INSERT INTO leave_balances (user_id, year, total_days)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id, year) DO UPDATE SET total_days = $3, updated_at = NOW()`,
-    Number(userId), y, Number(total_days)
-  )
-
-  const balance = await getUserBalance(Number(userId), y)
-  res.json(successResponse({ user_id: Number(userId), year: y, ...balance }, 'Đã cập nhật quỹ nghỉ phép năm'))
-})
-
 // ── PUT /leave-requests/recalculate-balances?year=YYYY — Tính lại paid_days
 // cho TOÀN BỘ đơn đã duyệt trong năm (ke_toan/admin). Dùng để đồng bộ lại quỹ
 // phép cho các đơn đã được duyệt TRƯỚC KHI tính năng quỹ phép có lương được
@@ -412,4 +391,25 @@ export const recalculateBalances = asyncHandler(async (req: Request, res: Respon
   }
 
   res.json(successResponse(null, `Đã đồng bộ lại quỹ nghỉ phép năm ${year} cho ${users.length} người`))
+})
+
+// ── PUT /leave-requests/balances/:userId — Cấu hình quỹ phép năm (ke_toan/admin) ─
+export const setBalance = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = req.params
+  const { year, total_days } = req.body ?? {}
+
+  const y = Number(year) || new Date().getFullYear()
+  if (total_days === undefined || isNaN(Number(total_days)) || Number(total_days) < 0) {
+    throw new AppError(400, 'Số ngày nghỉ phép có lương không hợp lệ')
+  }
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO leave_balances (user_id, year, total_days)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, year) DO UPDATE SET total_days = $3, updated_at = NOW()`,
+    Number(userId), y, Number(total_days)
+  )
+
+  const balance = await getUserBalance(Number(userId), y)
+  res.json(successResponse({ user_id: Number(userId), year: y, ...balance }, 'Đã cập nhật quỹ nghỉ phép năm'))
 })
