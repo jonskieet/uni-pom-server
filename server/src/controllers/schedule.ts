@@ -1,6 +1,7 @@
 // ============================================================
 // src/controllers/schedule.ts — Weekly Schedule controller
-// Module Lịch tuần — thay thế bảng trắng thủ công
+// Dùng $queryRawUnsafe / $executeRawUnsafe để hoạt động ngay
+// mà không cần regenerate Prisma client trên server
 // ============================================================
 
 import { Request, Response } from 'express'
@@ -8,15 +9,11 @@ import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
 
-// ── Prisma singleton ─────────────────────────────────────────
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
 const prisma = globalForPrisma._prisma
 
-/**
- * GET /schedule?week_start=YYYY-MM-DD&week_end=YYYY-MM-DD
- * Lấy tất cả sự kiện trong một khoảng ngày (1 tuần)
- */
+// ── GET /schedule?week_start=YYYY-MM-DD&week_end=YYYY-MM-DD ──
 export const getScheduleEvents = asyncHandler(async (req: Request, res: Response) => {
   const { week_start, week_end } = req.query
 
@@ -24,146 +21,147 @@ export const getScheduleEvents = asyncHandler(async (req: Request, res: Response
     throw new AppError(400, 'week_start và week_end là bắt buộc (YYYY-MM-DD)')
   }
 
-  const events = await (prisma as any).scheduleEvent.findMany({
-    where: {
-      date: {
-        gte: new Date(week_start as string),
-        lte: new Date(week_end as string),
-      },
-    },
-    include: {
-      creator: { select: { id: true, full_name: true, avatar_url: true } },
-      assignedUsers: {
-        include: {
-          user: { select: { id: true, full_name: true, avatar_url: true } }
-        }
-      },
-    },
-    orderBy: [
-      { date: 'asc' },
-      { start_time: 'asc' },
-    ],
-  })
+  const events = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT
+       e.id, e.title, e.description,
+       TO_CHAR(e.date, 'YYYY-MM-DD') AS date,
+       e.start_time, e.end_time,
+       e.category, e.priority, e.location,
+       e.created_by, e.created_at, e.updated_at,
+       COALESCE(
+         (SELECT json_agg(eu.user_id)
+          FROM schedule_event_users eu
+          WHERE eu.event_id = e.id),
+         '[]'
+       ) AS assigned_users
+     FROM schedule_events e
+     WHERE e.date >= $1::date
+       AND e.date <= $2::date
+     ORDER BY e.date ASC, e.start_time ASC NULLS LAST`,
+    week_start as string,
+    week_end as string
+  )
 
-  // Flatten assignedUsers → assigned_users: number[]
-  const result = events.map((e: any) => ({
-    ...e,
-    date: e.date.toISOString().slice(0, 10),
-    start_time: e.start_time ?? undefined,
-    end_time:   e.end_time   ?? undefined,
-    assigned_users: e.assignedUsers?.map((au: any) => au.user_id) ?? [],
-    assignedUsers: undefined,
-  }))
-
-  res.json(successResponse(result))
+  res.json(successResponse(events))
 })
 
-/**
- * POST /schedule — Tạo sự kiện mới
- */
+// ── POST /schedule ────────────────────────────────────────────
 export const createScheduleEvent = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as any).user
-  const {
-    title, description, date, start_time, end_time,
-    category, priority, location, assigned_users,
-  } = req.body
+  const { title, description, date, start_time, end_time, category, priority, location, assigned_users } = req.body
 
   if (!title?.trim()) throw new AppError(400, 'title là bắt buộc')
   if (!date)          throw new AppError(400, 'date là bắt buộc (YYYY-MM-DD)')
 
-  const event = await (prisma as any).scheduleEvent.create({
-    data: {
-      title:       title.trim(),
-      description: description?.trim() || null,
-      date:        new Date(date),
-      start_time:  start_time || null,
-      end_time:    end_time   || null,
-      category:    category   || 'other',
-      priority:    priority   || 'medium',
-      location:    location?.trim() || null,
-      created_by:  user.id,
-      // Many-to-many với users
-      ...(Array.isArray(assigned_users) && assigned_users.length > 0 ? {
-        assignedUsers: {
-          create: assigned_users.map((uid: number) => ({ user_id: uid })),
-        }
-      } : {}),
-    },
-  })
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `INSERT INTO schedule_events
+       (title, description, date, start_time, end_time, category, priority, location, created_by)
+     VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9)
+     RETURNING id, title, description,
+       TO_CHAR(date, 'YYYY-MM-DD') AS date,
+       start_time, end_time, category, priority, location,
+       created_by, created_at, updated_at`,
+    title.trim(),
+    description?.trim() || null,
+    date,
+    start_time || null,
+    end_time   || null,
+    category   || 'other',
+    priority   || 'medium',
+    location?.trim() || null,
+    user.id
+  )
 
-  res.status(201).json(successResponse({
-    ...event,
-    date: event.date.toISOString().slice(0, 10),
-  }))
+  const event = rows[0]
+
+  // Assign users nếu có
+  if (Array.isArray(assigned_users) && assigned_users.length > 0) {
+    for (const uid of assigned_users) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO schedule_event_users (event_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        event.id, uid
+      )
+    }
+  }
+
+  res.status(201).json(successResponse({ ...event, assigned_users: assigned_users ?? [] }))
 })
 
-/**
- * PUT /schedule/:id — Cập nhật sự kiện
- */
+// ── PUT /schedule/:id ─────────────────────────────────────────
 export const updateScheduleEvent = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const user = (req as any).user
 
-  const existing = await (prisma as any).scheduleEvent.findUnique({ where: { id } })
-  if (!existing) throw new AppError(404, 'Không tìm thấy sự kiện')
-
-  // Chỉ người tạo hoặc admin mới được sửa
-  if (existing.created_by !== user.id && user.role !== 'admin') {
+  const existing = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id, created_by FROM schedule_events WHERE id = $1`, id
+  )
+  if (!existing.length) throw new AppError(404, 'Không tìm thấy sự kiện')
+  if (existing[0].created_by !== user.id && user.role !== 'admin') {
     throw new AppError(403, 'Bạn không có quyền sửa sự kiện này')
   }
 
-  const {
-    title, description, date, start_time, end_time,
-    category, priority, location, assigned_users,
-  } = req.body
+  const { title, description, date, start_time, end_time, category, priority, location, assigned_users } = req.body
 
-  const updated = await (prisma as any).scheduleEvent.update({
-    where: { id },
-    data: {
-      ...(title       !== undefined && { title: title.trim() }),
-      ...(description !== undefined && { description: description?.trim() || null }),
-      ...(date        !== undefined && { date: new Date(date) }),
-      ...(start_time  !== undefined && { start_time: start_time || null }),
-      ...(end_time    !== undefined && { end_time:   end_time   || null }),
-      ...(category    !== undefined && { category }),
-      ...(priority    !== undefined && { priority }),
-      ...(location    !== undefined && { location: location?.trim() || null }),
-    },
-  })
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `UPDATE schedule_events SET
+       title       = COALESCE($1, title),
+       description = COALESCE($2, description),
+       date        = COALESCE($3::date, date),
+       start_time  = COALESCE($4, start_time),
+       end_time    = COALESCE($5, end_time),
+       category    = COALESCE($6, category),
+       priority    = COALESCE($7, priority),
+       location    = COALESCE($8, location),
+       updated_at  = NOW()
+     WHERE id = $9
+     RETURNING id, title, description,
+       TO_CHAR(date, 'YYYY-MM-DD') AS date,
+       start_time, end_time, category, priority, location,
+       created_by, created_at, updated_at`,
+    title?.trim()        || null,
+    description?.trim()  || null,
+    date                 || null,
+    start_time           || null,
+    end_time             || null,
+    category             || null,
+    priority             || null,
+    location?.trim()     || null,
+    id
+  )
 
   // Re-sync assigned users nếu có gửi lên
   if (Array.isArray(assigned_users)) {
-    await (prisma as any).scheduleEventUser.deleteMany({ where: { event_id: id } })
-    if (assigned_users.length > 0) {
-      await (prisma as any).scheduleEventUser.createMany({
-        data: assigned_users.map((uid: number) => ({ event_id: id, user_id: uid })),
-        skipDuplicates: true,
-      })
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM schedule_event_users WHERE event_id = $1`, id
+    )
+    for (const uid of assigned_users) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO schedule_event_users (event_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        id, uid
+      )
     }
   }
 
-  res.json(successResponse({
-    ...updated,
-    date: updated.date.toISOString().slice(0, 10),
-  }))
+  res.json(successResponse(rows[0]))
 })
 
-/**
- * DELETE /schedule/:id — Xoá sự kiện
- */
+// ── DELETE /schedule/:id ──────────────────────────────────────
 export const deleteScheduleEvent = asyncHandler(async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const user = (req as any).user
 
-  const existing = await (prisma as any).scheduleEvent.findUnique({ where: { id } })
-  if (!existing) throw new AppError(404, 'Không tìm thấy sự kiện')
-
-  if (existing.created_by !== user.id && user.role !== 'admin') {
+  const existing = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id, created_by FROM schedule_events WHERE id = $1`, id
+  )
+  if (!existing.length) throw new AppError(404, 'Không tìm thấy sự kiện')
+  if (existing[0].created_by !== user.id && user.role !== 'admin') {
     throw new AppError(403, 'Bạn không có quyền xoá sự kiện này')
   }
 
-  // assignedUsers cascade xoá nhờ ON DELETE CASCADE trong DB
-  await (prisma as any).scheduleEvent.delete({ where: { id } })
+  // Cascade: schedule_event_users tự xoá nhờ ON DELETE CASCADE
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM schedule_events WHERE id = $1`, id
+  )
 
   res.json(successResponse({ deleted: true, id }))
 })
