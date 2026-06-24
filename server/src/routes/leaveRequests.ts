@@ -12,6 +12,7 @@ import {
   getMyBalance,
   getAllBalances,
   setBalance,
+  recalculateBalances,
 } from '../controllers/leaveRequests'
 
 const router = Router()
@@ -33,5 +34,6 @@ router.delete('/:id',    anyRole,          cancelLeaveRequest)
 router.get('/',                keToansAndAdmin, getAllLeaveRequests)
 router.put('/:id/approve',     keToansAndAdmin, approveLeaveRequest)
 router.put('/:id/reject',      keToansAndAdmin, rejectLeaveRequest)
+router.put('/recalculate-balances', keToansAndAdmin, recalculateBalances)
 
 export default router

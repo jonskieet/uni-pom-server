@@ -375,3 +375,41 @@ export const setBalance = asyncHandler(async (req: Request, res: Response) => {
   const balance = await getUserBalance(Number(userId), y)
   res.json(successResponse({ user_id: Number(userId), year: y, ...balance }, 'Đã cập nhật quỹ nghỉ phép năm'))
 })
+
+// ── PUT /leave-requests/recalculate-balances?year=YYYY — Tính lại paid_days
+// cho TOÀN BỘ đơn đã duyệt trong năm (ke_toan/admin). Dùng để đồng bộ lại quỹ
+// phép cho các đơn đã được duyệt TRƯỚC KHI tính năng quỹ phép có lương được
+// thêm vào (paid_days của các đơn đó vẫn đang là 0 do chưa từng được tính) ──
+export const recalculateBalances = asyncHandler(async (req: Request, res: Response) => {
+  const year = Number((req.query as any).year) || new Date().getFullYear()
+
+  const users = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT DISTINCT user_id FROM leave_requests WHERE status = 'approved' AND EXTRACT(YEAR FROM start_date) = $1`,
+    year
+  )
+
+  for (const u of users) {
+    const balRows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT total_days FROM leave_balances WHERE user_id = $1 AND year = $2`, u.user_id, year
+    )
+    const quota = balRows.length ? Number(balRows[0].total_days) : DEFAULT_ANNUAL_LEAVE_DAYS
+
+    // Duyệt theo thứ tự thời gian duyệt (đơn duyệt trước được ưu tiên trừ quỹ trước)
+    const reqs = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, total_days FROM leave_requests
+       WHERE user_id = $1 AND status = 'approved' AND EXTRACT(YEAR FROM start_date) = $2
+       ORDER BY approved_at ASC NULLS LAST, id ASC`,
+      u.user_id, year
+    )
+
+    let used = 0
+    for (const r of reqs) {
+      const remaining = Math.max(0, quota - used)
+      const paid = Math.max(0, Math.min(Number(r.total_days), remaining))
+      used += paid
+      await prisma.$executeRawUnsafe(`UPDATE leave_requests SET paid_days = $1 WHERE id = $2`, paid, r.id)
+    }
+  }
+
+  res.json(successResponse(null, `Đã đồng bộ lại quỹ nghỉ phép năm ${year} cho ${users.length} người`))
+})
