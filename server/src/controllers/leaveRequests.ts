@@ -1,24 +1,27 @@
 // ============================================================
 // src/controllers/leaveRequests.ts — Xin nghỉ phép & duyệt nghỉ phép
-// - Nhân viên: tạo / xem / sửa / hủy đơn của mình (khi còn pending)
-// - Kế toán / Admin: xem tất cả, duyệt / từ chối
+// - Nhân viên: tạo / xem / sửa / hủy đơn của mình, xem quỹ phép còn lại
+// - Kế toán / Admin: xem tất cả, duyệt / từ chối, cấu hình quỹ phép năm
 //
-// Khi đơn được DUYỆT → tự động ghi đè bảng `attendance` cho từng ngày
-// làm việc trong khoảng [start_date, end_date] (loại Chủ nhật) với
-// status = 'leave', để khớp với phần tính "ngày vắng" ở module chấm công
-// (ngày đã được duyệt nghỉ sẽ KHÔNG bị tính là vắng).
+// v2 — Số ngày nghỉ phép tính theo CẤU HÌNH NGÀY LÀM VIỆC TRONG TUẦN
+//      (workWeek) thay vì hard-code loại Chủ nhật. Khi đơn được DUYỆT,
+//      hệ thống tự trừ vào QUỸ NGHỈ PHÉP CÓ LƯƠNG của user trong năm đó
+//      (leave_balances) — nếu vượt quỹ, phần vượt được ghi nhận là nghỉ
+//      KHÔNG LƯƠNG (paid_days < total_days).
 // ============================================================
 
 import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { getWorkWeekConfig, dayWeight, workingHalf, WEEKDAY_LABEL } from '../utils/workWeek'
 
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
 const prisma = globalForPrisma._prisma
 
 const DAY_TYPES = ['full', 'half_morning', 'half_afternoon']
+const DEFAULT_ANNUAL_LEAVE_DAYS = 12
 
 function parseDateOnly(value: string): Date {
   const d = new Date(`${value}T00:00:00`)
@@ -26,28 +29,27 @@ function parseDateOnly(value: string): Date {
   return d
 }
 
-/** Đếm số ngày làm việc (loại Chủ nhật) trong khoảng [start, end] — dùng để tính total_days */
-function countWorkDays(start: Date, end: Date): number {
-  let count = 0
-  const cur = new Date(start)
-  while (cur <= end) {
-    if (cur.getDay() !== 0) count++
-    cur.setDate(cur.getDate() + 1)
-  }
-  return count
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Liệt kê các ngày làm việc (loại Chủ nhật) trong khoảng [start, end] dạng 'YYYY-MM-DD' */
-function listWorkDates(start: Date, end: Date): string[] {
+/** Tổng số ngày làm việc (đã áp trọng số nửa ngày) trong khoảng [start, end] */
+function countWorkDays(start: Date, end: Date, cfg: Record<number, any>): number {
+  let total = 0
+  const cur = new Date(start)
+  while (cur <= end) {
+    total += dayWeight(cfg, cur.getDay())
+    cur.setDate(cur.getDate() + 1)
+  }
+  return Math.round(total * 2) / 2 // chặn sai số float, giữ tối đa 1 chữ số thập phân .5
+}
+
+/** Liệt kê các ngày làm việc (trọng số > 0) trong khoảng [start, end] dạng 'YYYY-MM-DD' */
+function listWorkDates(start: Date, end: Date, cfg: Record<number, any>): string[] {
   const dates: string[] = []
   const cur = new Date(start)
   while (cur <= end) {
-    if (cur.getDay() !== 0) {
-      const y = cur.getFullYear()
-      const m = String(cur.getMonth() + 1).padStart(2, '0')
-      const d = String(cur.getDate()).padStart(2, '0')
-      dates.push(`${y}-${m}-${d}`)
-    }
+    if (dayWeight(cfg, cur.getDay()) > 0) dates.push(ymd(cur))
     cur.setDate(cur.getDate() + 1)
   }
   return dates
@@ -60,9 +62,9 @@ const DAY_TYPE_NOTE: Record<string, string> = {
 }
 
 /** Đánh dấu status='leave' cho các ngày làm việc trong đơn đã duyệt */
-async function applyLeaveToAttendance(userId: number, startDate: Date, endDate: Date, dayType: string) {
-  const dates = listWorkDates(startDate, endDate)
-  const note = DAY_TYPE_NOTE[dayType] ?? 'Nghỉ phép'
+async function applyLeaveToAttendance(userId: number, startDate: Date, endDate: Date, dayType: string, cfg: Record<number, any>, unpaidNote: string) {
+  const dates = listWorkDates(startDate, endDate, cfg)
+  const note = (DAY_TYPE_NOTE[dayType] ?? 'Nghỉ phép') + unpaidNote
   for (const date of dates) {
     await prisma.$executeRawUnsafe(
       `INSERT INTO attendance (user_id, date, status, note)
@@ -75,8 +77,8 @@ async function applyLeaveToAttendance(userId: number, startDate: Date, endDate: 
 }
 
 /** Gỡ status='leave' khỏi các ngày của đơn (khi admin từ chối một đơn đã từng được duyệt) */
-async function revertLeaveFromAttendance(userId: number, startDate: Date, endDate: Date) {
-  const dates = listWorkDates(startDate, endDate)
+async function revertLeaveFromAttendance(userId: number, startDate: Date, endDate: Date, cfg: Record<number, any>) {
+  const dates = listWorkDates(startDate, endDate, cfg)
   for (const date of dates) {
     await prisma.$executeRawUnsafe(
       `UPDATE attendance SET status = 'absent', note = NULL, updated_at = NOW()
@@ -84,6 +86,23 @@ async function revertLeaveFromAttendance(userId: number, startDate: Date, endDat
       userId, date
     )
   }
+}
+
+/** Quỹ phép năm của 1 user: tổng được cấp, đã dùng (paid_days của đơn đã duyệt), còn lại */
+async function getUserBalance(userId: number, year: number, excludeLeaveId?: number) {
+  const balRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT total_days FROM leave_balances WHERE user_id = $1 AND year = $2`, userId, year
+  )
+  const total = balRows.length ? Number(balRows[0].total_days) : DEFAULT_ANNUAL_LEAVE_DAYS
+
+  const usedRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT COALESCE(SUM(paid_days), 0) AS used FROM leave_requests
+     WHERE user_id = $1 AND status = 'approved' AND EXTRACT(YEAR FROM start_date) = $2` +
+      (excludeLeaveId ? ` AND id != $3` : ''),
+    ...(excludeLeaveId ? [userId, year, excludeLeaveId] : [userId, year])
+  )
+  const used = Number(usedRows[0]?.used ?? 0)
+  return { total, used, remaining: Math.max(0, total - used) }
 }
 
 // ── POST /leave-requests — Tạo đơn xin nghỉ phép ─────────────────────────────
@@ -94,15 +113,26 @@ export const createLeaveRequest = asyncHandler(async (req: Request, res: Respons
   if (!start_date) throw new AppError(400, 'Thiếu ngày bắt đầu nghỉ')
   if (!DAY_TYPES.includes(day_type)) throw new AppError(400, 'Loại nghỉ không hợp lệ')
 
+  const cfg = await getWorkWeekConfig(prisma)
   const isHalf = day_type !== 'full'
   const startDate = parseDateOnly(start_date)
   const endDate = isHalf ? startDate : parseDateOnly(end_date || start_date)
 
   if (endDate < startDate) throw new AppError(400, 'Ngày kết thúc phải sau hoặc bằng ngày bắt đầu')
-  if (isHalf && startDate.getDay() === 0) throw new AppError(400, 'Không thể xin nghỉ nửa ngày vào Chủ nhật')
 
-  const total_days = isHalf ? 0.5 : countWorkDays(startDate, endDate)
-  if (total_days <= 0) throw new AppError(400, 'Khoảng thời gian nghỉ không hợp lệ (toàn bộ rơi vào Chủ nhật)')
+  if (isHalf) {
+    const half = workingHalf(cfg, startDate.getDay())
+    const weight = dayWeight(cfg, startDate.getDay())
+    if (weight <= 0) throw new AppError(400, `${WEEKDAY_LABEL[startDate.getDay()]} là ngày nghỉ, không thể xin nghỉ phép`)
+    if (weight === 1) {
+      // Ngày làm cả ngày → cả 2 buổi đều hợp lệ để xin nghỉ nửa buổi
+    } else if (half && day_type !== `half_${half}`) {
+      throw new AppError(400, `${WEEKDAY_LABEL[startDate.getDay()]} công ty chỉ làm buổi ${half === 'morning' ? 'sáng' : 'chiều'}, không thể xin nghỉ nửa buổi còn lại`)
+    }
+  }
+
+  const total_days = isHalf ? 0.5 : countWorkDays(startDate, endDate, cfg)
+  if (total_days <= 0) throw new AppError(400, 'Khoảng thời gian nghỉ không hợp lệ (toàn bộ rơi vào ngày nghỉ)')
 
   // Chặn trùng lịch với đơn đang chờ duyệt / đã duyệt khác của chính người này
   const overlap = await prisma.$queryRawUnsafe<any[]>(
@@ -204,12 +234,14 @@ export const updateLeaveRequest = asyncHandler(async (req: Request, res: Respons
   if (existing[0].status !== 'pending') throw new AppError(400, 'Chỉ có thể sửa đơn đang chờ duyệt')
 
   if (!DAY_TYPES.includes(day_type)) throw new AppError(400, 'Loại nghỉ không hợp lệ')
+
+  const cfg = await getWorkWeekConfig(prisma)
   const isHalf = day_type !== 'full'
   const startDate = parseDateOnly(start_date)
   const endDate = isHalf ? startDate : parseDateOnly(end_date || start_date)
   if (endDate < startDate) throw new AppError(400, 'Ngày kết thúc phải sau hoặc bằng ngày bắt đầu')
 
-  const total_days = isHalf ? 0.5 : countWorkDays(startDate, endDate)
+  const total_days = isHalf ? 0.5 : countWorkDays(startDate, endDate, cfg)
   if (total_days <= 0) throw new AppError(400, 'Khoảng thời gian nghỉ không hợp lệ')
 
   await prisma.$executeRawUnsafe(
@@ -248,14 +280,30 @@ export const approveLeaveRequest = asyncHandler(async (req: Request, res: Respon
   const lr = existing[0]
   if (lr.status !== 'pending') throw new AppError(400, 'Đơn này đã được xử lý')
 
+  const cfg = await getWorkWeekConfig(prisma)
+  const startDate = new Date(lr.start_date)
+  const year = startDate.getFullYear()
+  const totalDays = Number(lr.total_days)
+
+  // Trừ vào quỹ nghỉ phép có lương của user trong năm — phần vượt quỹ tính là không lương
+  const balance = await getUserBalance(lr.user_id, year, Number(id))
+  const paidDays = Math.max(0, Math.min(totalDays, balance.remaining))
+  const unpaidDays = Math.round((totalDays - paidDays) * 2) / 2
+
   await prisma.$executeRawUnsafe(
-    `UPDATE leave_requests SET status = 'approved', approved_by = $1, approved_at = NOW(), updated_at = NOW() WHERE id = $2`,
-    approverId, Number(id)
+    `UPDATE leave_requests SET status = 'approved', approved_by = $1, approved_at = NOW(), paid_days = $2, updated_at = NOW() WHERE id = $3`,
+    approverId, paidDays, Number(id)
   )
 
-  await applyLeaveToAttendance(lr.user_id, new Date(lr.start_date), new Date(lr.end_date), lr.day_type)
+  const unpaidNote = unpaidDays > 0 ? ` — ${unpaidDays} ngày không lương (vượt quỹ phép năm ${year})` : ''
+  await applyLeaveToAttendance(lr.user_id, startDate, new Date(lr.end_date), lr.day_type, cfg, unpaidNote)
 
-  res.json(successResponse(null, 'Đã duyệt đơn xin nghỉ phép'))
+  res.json(successResponse(
+    { paid_days: paidDays, unpaid_days: unpaidDays },
+    unpaidDays > 0
+      ? `Đã duyệt đơn. Lưu ý: ${unpaidDays} ngày vượt quỹ phép năm, tính là nghỉ không lương`
+      : 'Đã duyệt đơn xin nghỉ phép'
+  ))
 })
 
 // ── PUT /leave-requests/:id/reject ───────────────────────────────────────────
@@ -271,14 +319,59 @@ export const rejectLeaveRequest = asyncHandler(async (req: Request, res: Respons
   const wasApproved = lr.status === 'approved'
 
   await prisma.$executeRawUnsafe(
-    `UPDATE leave_requests SET status = 'rejected', reject_note = $1, updated_at = NOW() WHERE id = $2`,
+    `UPDATE leave_requests SET status = 'rejected', reject_note = $1, paid_days = 0, updated_at = NOW() WHERE id = $2`,
     note ?? null, Number(id)
   )
 
-  // Nếu đơn này trước đó đã được duyệt (đảo quyết định) → gỡ trạng thái 'leave' đã gán cho attendance
   if (wasApproved) {
-    await revertLeaveFromAttendance(lr.user_id, new Date(lr.start_date), new Date(lr.end_date))
+    const cfg = await getWorkWeekConfig(prisma)
+    await revertLeaveFromAttendance(lr.user_id, new Date(lr.start_date), new Date(lr.end_date), cfg)
   }
 
   res.json(successResponse(null, 'Đã từ chối đơn xin nghỉ phép'))
+})
+
+// ── GET /leave-requests/balances/my?year=YYYY — Quỹ phép của chính tôi ─────
+export const getMyBalance = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id
+  const year = Number((req.query as any).year) || new Date().getFullYear()
+  const balance = await getUserBalance(userId, year)
+  res.json(successResponse({ year, ...balance }))
+})
+
+// ── GET /leave-requests/balances?year=YYYY — Quỹ phép toàn bộ user (ke_toan/admin) ─
+export const getAllBalances = asyncHandler(async (req: Request, res: Response) => {
+  const year = Number((req.query as any).year) || new Date().getFullYear()
+
+  const users = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id, full_name, role FROM users WHERE role != 'admin' AND is_active = true ORDER BY full_name`
+  )
+
+  const rows = await Promise.all(users.map(async (u: any) => {
+    const balance = await getUserBalance(u.id, year)
+    return { user_id: u.id, full_name: u.full_name, role: u.role, year, ...balance }
+  }))
+
+  res.json(successResponse(rows))
+})
+
+// ── PUT /leave-requests/balances/:userId — Cấu hình quỹ phép năm (ke_toan/admin) ─
+export const setBalance = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = req.params
+  const { year, total_days } = req.body ?? {}
+
+  const y = Number(year) || new Date().getFullYear()
+  if (total_days === undefined || isNaN(Number(total_days)) || Number(total_days) < 0) {
+    throw new AppError(400, 'Số ngày nghỉ phép có lương không hợp lệ')
+  }
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO leave_balances (user_id, year, total_days)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, year) DO UPDATE SET total_days = $3, updated_at = NOW()`,
+    Number(userId), y, Number(total_days)
+  )
+
+  const balance = await getUserBalance(Number(userId), y)
+  res.json(successResponse({ user_id: Number(userId), year: y, ...balance }, 'Đã cập nhật quỹ nghỉ phép năm'))
 })

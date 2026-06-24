@@ -9,11 +9,19 @@ import {
   cancelLeaveRequest,
   approveLeaveRequest,
   rejectLeaveRequest,
+  getMyBalance,
+  getAllBalances,
+  setBalance,
 } from '../controllers/leaveRequests'
 
 const router = Router()
 
 router.use(authMiddleware)
+
+// Quỹ nghỉ phép năm — đặt TRƯỚC '/:id' để không bị nuốt route
+router.get('/balances/my',      anyRole,          getMyBalance)
+router.get('/balances',         keToansAndAdmin,  getAllBalances)
+router.put('/balances/:userId', keToansAndAdmin,  setBalance)
 
 // Nhân viên: tạo / xem / sửa / hủy đơn của mình
 router.get('/my',        anyRole,          getMyLeaveRequests)

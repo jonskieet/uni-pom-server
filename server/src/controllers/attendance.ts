@@ -1,21 +1,22 @@
 // ============================================================
 // src/controllers/attendance.ts — Chấm công
 // - Nhân viên: checkIn, checkOut, getMyAttendance
-// - Kế toán / Admin: getAll, getStats
+// - Kế toán / Admin: getAll, getStats, getWorkWeek, setWorkWeek
 //
-// v4 — BỎ tính năng "đi trễ" (work-hours config + late threshold).
-//      THÊM tính năng "ngày vắng": so khớp các ngày làm việc đã qua
-//      trong tháng (loại Chủ nhật) với dữ liệu chấm công + nghỉ phép
-//      đã duyệt → ngày nào không có check-in và không được duyệt nghỉ
-//      thì tính là "vắng" (absent), kể cả khi KHÔNG có dòng nào trong
-//      bảng attendance cho ngày đó (trước đây hệ thống không có cơ chế
-//      này, chỉ đếm status='absent' nhưng chưa từng có gì ghi status đó).
+// v5 — Tính "ngày làm việc" / "ngày vắng" dựa trên cấu hình NGÀY LÀM VIỆC
+//      TRONG TUẦN (thay cho khung giờ làm + đi trễ đã bị loại bỏ ở v4).
+//      Ví dụ cấu hình: Thứ 2 → Thứ 6 làm cả ngày, Thứ 7 chỉ làm buổi sáng
+//      (trọng số 0.5 ngày), Chủ nhật nghỉ (trọng số 0).
+//      Toàn bộ phép tính ngày làm/vắng được dựng ở phía JS (duyệt từng
+//      ngày trong tháng + áp trọng số) rồi mới ghép với dữ liệu chấm công
+//      thật trong DB — tránh phải viết SQL động phức tạp theo cấu hình.
 // ============================================================
 
 import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
+import { getWorkWeekConfig, invalidateWorkWeekCache, dayWeight, DAY_MODE_LABEL, WEEKDAY_LABEL, DayMode } from '../utils/workWeek'
 
 const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
@@ -50,51 +51,133 @@ function ensureAttendanceSchema(): Promise<void> {
 function toVietnamDateOnly(d: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit',
   }).formatToParts(d)
   const get = (type: string) => parts.find(p => p.type === type)?.value ?? ''
   return `${get('year')}-${get('month')}-${get('day')}`
 }
+
+/** Danh sách các ngày làm việc (trọng số > 0) từ from đến to (cả 2 đầu), không vượt quá hôm nay */
+function buildWorkDays(from: string, to: string, cfg: Record<number, DayMode>): { date: string; weight: number }[] {
+  const today = toVietnamDateOnly(new Date())
+  const out: { date: string; weight: number }[] = []
+  const cur = new Date(`${from}T00:00:00`)
+  const end = new Date(`${to}T00:00:00`)
+  while (cur <= end) {
+    const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
+    if (dateStr > today) break
+    const w = dayWeight(cfg, cur.getDay())
+    if (w > 0) out.push({ date: dateStr, weight: w })
+    cur.setDate(cur.getDate() + 1)
+  }
+  return out
+}
+
+function monthRange(month?: string, year?: string) {
+  const now = new Date()
+  const y = Number(year) || now.getFullYear()
+  const m = Number(month) || now.getMonth() + 1
+  const from = `${y}-${String(m).padStart(2, '0')}-01`
+  const to = toVietnamDateOnly(new Date(y, m, 0, 23, 59, 59))
+  return { from, to }
+}
+
+// ── GET /attendance/work-hours — Khung giờ làm việc chuẩn (chỉ mang tính
+// thông tin/hiển thị, KHÔNG dùng để tính đi trễ — tính năng đó đã bị loại bỏ) ─
+export const getWorkHours = asyncHandler(async (_req: Request, res: Response) => {
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT value FROM public.system_settings WHERE key = 'attendance_work_hours'`
+  )
+  const value = rows[0]?.value ?? {}
+  res.json(successResponse({
+    work_start: value.work_start ?? '08:00',
+    work_end: value.work_end ?? '17:30',
+  }))
+})
+
+// ── PUT /attendance/work-hours — Cập nhật khung giờ làm việc (ke_toan + admin) ─
+export const setWorkHours = asyncHandler(async (req: Request, res: Response) => {
+  const { work_start, work_end } = req.body ?? {}
+  const timeRe = /^([01]\d|2[0-3]):([0-5]\d)$/
+  if (!timeRe.test(work_start) || !timeRe.test(work_end)) {
+    throw new AppError(400, 'Giờ làm việc không hợp lệ (định dạng HH:mm)')
+  }
+  if (work_end <= work_start) throw new AppError(400, 'Giờ ra phải sau giờ vào')
+
+  const value = { work_start, work_end }
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO public.system_settings (key, value)
+     VALUES ('attendance_work_hours', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+    JSON.stringify(value)
+  )
+
+  res.json(successResponse(value, 'Đã cập nhật khung giờ làm việc'))
+})
+
+// ── GET /attendance/work-week — Cấu hình ngày làm việc trong tuần ───────────
+export const getWorkWeek = asyncHandler(async (_req: Request, res: Response) => {
+  const cfg = await getWorkWeekConfig(prisma)
+  const days = Object.keys(WEEKDAY_LABEL).map(k => ({
+    dow: Number(k), label: WEEKDAY_LABEL[Number(k)], mode: cfg[Number(k)], mode_label: DAY_MODE_LABEL[cfg[Number(k)]],
+  }))
+  res.json(successResponse({ config: cfg, days }))
+})
+
+// ── PUT /attendance/work-week — Cập nhật cấu hình (ke_toan + admin) ─────────
+export const setWorkWeek = asyncHandler(async (req: Request, res: Response) => {
+  const { config } = req.body ?? {}
+  if (!config || typeof config !== 'object') throw new AppError(400, 'Thiếu cấu hình ngày làm việc')
+
+  const valid: DayMode[] = ['off', 'full', 'half_morning', 'half_afternoon']
+  const clean: Record<string, DayMode> = {}
+  for (let dow = 0; dow <= 6; dow++) {
+    const mode = config[dow] ?? config[String(dow)]
+    if (!valid.includes(mode)) throw new AppError(400, `Cấu hình ngày ${WEEKDAY_LABEL[dow]} không hợp lệ`)
+    clean[String(dow)] = mode
+  }
+  if (Object.values(clean).every(m => m === 'off')) throw new AppError(400, 'Phải có ít nhất 1 ngày làm việc trong tuần')
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO public.system_settings (key, value)
+     VALUES ('attendance_work_week', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+    JSON.stringify(clean)
+  )
+  invalidateWorkWeekCache()
+
+  res.json(successResponse({ config: clean }, 'Đã cập nhật cấu hình ngày làm việc trong tuần'))
+})
 
 // ── GET /attendance/my ───────────────────────────────────────────────────────
 export const getMyAttendance = asyncHandler(async (req: Request, res: Response) => {
   await ensureAttendanceSchema()
   const userId = req.user!.id
   const { month, year } = req.query as Record<string, string>
+  const { from, to } = monthRange(month, year)
 
-  const now   = new Date()
-  const y     = Number(year)  || now.getFullYear()
-  const m     = Number(month) || now.getMonth() + 1   // 1-based
+  const [cfg, attRows, userRows] = await Promise.all([
+    getWorkWeekConfig(prisma),
+    prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM attendance WHERE user_id = $1 AND date >= $2::date AND date <= $3::date`,
+      userId, from, to
+    ),
+    prisma.$queryRawUnsafe<any[]>(`SELECT id, full_name, username, role FROM users WHERE id = $1`, userId),
+  ])
 
-  // Truyền dạng chuỗi 'YYYY-MM-DD' + cast ::date — tránh lỗi
-  // "operator does not exist: date = text" khi $queryRawUnsafe
-  // không biết kiểu cột đích và serialize Date object thành text.
-  const from = `${y}-${String(m).padStart(2, '0')}-01`
-  const to   = toVietnamDateOnly(new Date(y, m, 0, 23, 59, 59)) // ngày cuối tháng
+  const user = userRows[0]
+  const attByDate = new Map(attRows.map((a: any) => [toVietnamDateOnly(new Date(a.date)), a]))
+  const workDays = buildWorkDays(from, to, cfg)
 
-  // Ma trận ngày làm việc (loại Chủ nhật, không vượt quá hôm nay) GHÉP với
-  // dữ liệu chấm công thật → ngày nào thiếu dữ liệu sẽ tự hiện ra là "absent".
-  const rows = await prisma.$queryRawUnsafe<any[]>(
-    `WITH work_days AS (
-       SELECT d::date AS d
-       FROM generate_series($2::date, $3::date, '1 day') d
-       WHERE EXTRACT(DOW FROM d) != 0 AND d::date <= CURRENT_DATE
-     )
-     SELECT
-       COALESCE(a.id, 0)                      AS id,
-       $1::int                                 AS user_id,
-       wd.d                                     AS date,
-       a.check_in, a.check_out, a.note,
-       COALESCE(a.status, 'absent')            AS status,
-       u.full_name, u.username, u.role
-     FROM work_days wd
-     JOIN users u ON u.id = $1
-     LEFT JOIN attendance a ON a.user_id = $1 AND a.date = wd.d
-     ORDER BY wd.d DESC`,
-    userId, from, to
-  )
+  const rows = workDays.map(({ date, weight }) => {
+    const a = attByDate.get(date)
+    const status = a?.check_in ? 'present' : a?.status === 'leave' ? 'leave' : 'absent'
+    return {
+      id: a?.id ?? 0, user_id: userId, date, weight,
+      check_in: a?.check_in ?? null, check_out: a?.check_out ?? null, note: a?.note ?? null, status,
+      full_name: user?.full_name, username: user?.username, role: user?.role,
+    }
+  }).sort((a, b) => (a.date < b.date ? 1 : -1))
 
   res.json(successResponse(rows))
 })
@@ -103,54 +186,41 @@ export const getMyAttendance = asyncHandler(async (req: Request, res: Response) 
 export const getAllAttendance = asyncHandler(async (req: Request, res: Response) => {
   await ensureAttendanceSchema()
   const { month, year, user_id, status } = req.query as Record<string, string>
+  const { from, to } = monthRange(month, year)
 
-  const now = new Date()
-  const y   = Number(year)  || now.getFullYear()
-  const m   = Number(month) || now.getMonth() + 1
+  let userWhere = `role != 'admin' AND is_active = true`
+  const userParams: any[] = []
+  if (user_id) { userWhere += ` AND id = $1`; userParams.push(Number(user_id)) }
 
-  const from = `${y}-${String(m).padStart(2, '0')}-01`
-  const to   = toVietnamDateOnly(new Date(y, m, 0, 23, 59, 59))
+  const [cfg, users, attRows] = await Promise.all([
+    getWorkWeekConfig(prisma),
+    prisma.$queryRawUnsafe<any[]>(`SELECT id, full_name, username, role, avatar_url FROM users WHERE ${userWhere} ORDER BY full_name`, ...userParams),
+    prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM attendance WHERE date >= $1::date AND date <= $2::date` + (user_id ? ` AND user_id = $3` : ''),
+      ...(user_id ? [from, to, Number(user_id)] : [from, to])
+    ),
+  ])
 
-  let userWhere = `u.role != 'admin' AND u.is_active = true`
-  const params: any[] = [from, to]
-  let idx = 3
-  if (user_id) {
-    userWhere += ` AND u.id = $${idx++}`
-    params.push(Number(user_id))
-  }
+  const attByUserDate = new Map<string, any>()
+  attRows.forEach((a: any) => attByUserDate.set(`${a.user_id}|${toVietnamDateOnly(new Date(a.date))}`, a))
 
-  // Ma trận (user × ngày làm việc đã qua trong tháng, loại Chủ nhật) ghép với
-  // dữ liệu chấm công thật. Những ô trống (không check-in, không nghỉ phép)
-  // sẽ tự hiện ra với status='absent' dù KHÔNG có dòng nào trong bảng attendance.
-  const rows = await prisma.$queryRawUnsafe<any[]>(
-    `WITH work_days AS (
-       SELECT d::date AS d
-       FROM generate_series($1::date, $2::date, '1 day') d
-       WHERE EXTRACT(DOW FROM d) != 0 AND d::date <= CURRENT_DATE
-     ),
-     target_users AS (
-       SELECT u.id, u.full_name, u.username, u.role, u.avatar_url
-       FROM users u WHERE ${userWhere}
-     ),
-     matrix AS (
-       SELECT tu.id AS user_id, tu.full_name, tu.username, tu.role, tu.avatar_url, wd.d
-       FROM target_users tu CROSS JOIN work_days wd
-     )
-     SELECT
-       COALESCE(a.id, 0)                AS id,
-       m.user_id, m.full_name, m.username, m.role, m.avatar_url,
-       m.d                               AS date,
-       a.check_in, a.check_out, a.note,
-       COALESCE(a.status, 'absent')      AS status
-     FROM matrix m
-     LEFT JOIN attendance a ON a.user_id = m.user_id AND a.date = m.d
-     ORDER BY m.d DESC, m.full_name ASC`,
-    ...params
-  )
+  const workDays = buildWorkDays(from, to, cfg)
 
-  const filtered = status ? rows.filter(r => r.status === status) : rows
+  const rows: any[] = []
+  users.forEach((u: any) => {
+    workDays.forEach(({ date, weight }) => {
+      const a = attByUserDate.get(`${u.id}|${date}`)
+      const rowStatus = a?.check_in ? 'present' : a?.status === 'leave' ? 'leave' : 'absent'
+      if (status && status !== rowStatus) return
+      rows.push({
+        id: a?.id ?? 0, user_id: u.id, full_name: u.full_name, username: u.username, role: u.role, avatar_url: u.avatar_url,
+        date, weight, check_in: a?.check_in ?? null, check_out: a?.check_out ?? null, note: a?.note ?? null, status: rowStatus,
+      })
+    })
+  })
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.full_name.localeCompare(b.full_name)))
 
-  res.json(successResponse(filtered))
+  res.json(successResponse(rows))
 })
 
 // ── POST /attendance/check-in ─────────────────────────────────────────────────
@@ -162,7 +232,6 @@ export const checkIn = asyncHandler(async (req: Request, res: Response) => {
   const now     = new Date()
   const today   = toVietnamDateOnly(now)
 
-  // Upsert: nếu đã chấm công hôm nay thì không cho check-in lại
   const existing = await prisma.$queryRawUnsafe<any[]>(
     `SELECT id, check_in, status FROM attendance WHERE user_id = $1 AND date = $2::date`,
     userId, today
@@ -176,7 +245,6 @@ export const checkIn = asyncHandler(async (req: Request, res: Response) => {
   }
 
   if (existing.length > 0) {
-    // Update bản ghi đã có (check_in bị null) → set check_in
     await prisma.$executeRawUnsafe(
       `UPDATE attendance SET check_in = $1::timestamptz, status = 'present', note = $2, updated_at = NOW()
        WHERE user_id = $3 AND date = $4::date`,
@@ -248,39 +316,33 @@ export const getTodayStatus = asyncHandler(async (req: Request, res: Response) =
 export const getStats = asyncHandler(async (req: Request, res: Response) => {
   await ensureAttendanceSchema()
   const { month, year } = req.query as Record<string, string>
+  const { from, to } = monthRange(month, year)
 
-  const now = new Date()
-  const y   = Number(year)  || now.getFullYear()
-  const m   = Number(month) || now.getMonth() + 1
+  const [cfg, users, attRows] = await Promise.all([
+    getWorkWeekConfig(prisma),
+    prisma.$queryRawUnsafe<any[]>(`SELECT id, full_name, role FROM users WHERE role != 'admin' AND is_active = true ORDER BY full_name`),
+    prisma.$queryRawUnsafe<any[]>(`SELECT user_id, date, check_in, status FROM attendance WHERE date >= $1::date AND date <= $2::date`, from, to),
+  ])
 
-  const from = `${y}-${String(m).padStart(2, '0')}-01`
-  const to   = toVietnamDateOnly(new Date(y, m, 0, 23, 59, 59))
+  const attByUserDate = new Map<string, any>()
+  attRows.forEach((a: any) => attByUserDate.set(`${a.user_id}|${toVietnamDateOnly(new Date(a.date))}`, a))
 
-  // total_days = số ngày làm việc đã qua trong tháng (loại Chủ nhật, không
-  // vượt hôm nay) — đây là mẫu số để tính vắng, KHÔNG còn liên quan đi trễ.
-  const rows = await prisma.$queryRawUnsafe<any[]>(
-    `WITH work_days AS (
-       SELECT d::date AS d
-       FROM generate_series($1::date, $2::date, '1 day') d
-       WHERE EXTRACT(DOW FROM d) != 0 AND d::date <= CURRENT_DATE
-     ),
-     matrix AS (
-       SELECT u.id, u.full_name, u.role, wd.d
-       FROM users u CROSS JOIN work_days wd
-       WHERE u.role != 'admin' AND u.is_active = true
-     )
-     SELECT
-       mx.id, mx.full_name, mx.role,
-       COUNT(*) FILTER (WHERE a.check_in IS NOT NULL)::int                                 AS present_count,
-       COUNT(*) FILTER (WHERE a.status = 'leave')::int                                     AS leave_count,
-       COUNT(*) FILTER (WHERE a.check_in IS NULL AND COALESCE(a.status,'') != 'leave')::int AS absent_count,
-       COUNT(*)::int                                                                        AS total_days
-     FROM matrix mx
-     LEFT JOIN attendance a ON a.user_id = mx.id AND a.date = mx.d
-     GROUP BY mx.id, mx.full_name, mx.role
-     ORDER BY mx.full_name`,
-    from, to
-  )
+  const workDays = buildWorkDays(from, to, cfg)
+
+  const rows = users.map((u: any) => {
+    let present = 0, leave = 0, absent = 0, total = 0
+    workDays.forEach(({ date, weight }) => {
+      const a = attByUserDate.get(`${u.id}|${date}`)
+      total += weight
+      if (a?.check_in) present += weight
+      else if (a?.status === 'leave') leave += weight
+      else absent += weight
+    })
+    return {
+      id: u.id, full_name: u.full_name, role: u.role,
+      present_count: present, leave_count: leave, absent_count: absent, total_days: total,
+    }
+  })
 
   res.json(successResponse(rows))
 })
