@@ -193,7 +193,20 @@ export const getInstances = asyncHandler(async (req: Request, res: Response) => 
     SELECT wi.*, w.name AS workflow_name, w.color, w.icon,
       u.full_name AS assignee_name, c.full_name AS creator_name,
       COUNT(wis.id)::int AS total_steps,
-      COUNT(CASE WHEN wis.status='completed' THEN 1 END)::int AS done_steps
+      COUNT(CASE WHEN wis.status='completed' THEN 1 END)::int AS done_steps,
+      -- Bước đang chạy hiện tại
+      (
+        SELECT ws2.name FROM workflow_instance_steps wis2
+        JOIN workflow_steps ws2 ON ws2.id = wis2.step_id
+        WHERE wis2.instance_id = wi.id AND wis2.status = 'in_progress'
+        ORDER BY ws2.step_order ASC LIMIT 1
+      ) AS current_step_name,
+      (
+        SELECT ws2.step_order FROM workflow_instance_steps wis2
+        JOIN workflow_steps ws2 ON ws2.id = wis2.step_id
+        WHERE wis2.instance_id = wi.id AND wis2.status = 'in_progress'
+        ORDER BY ws2.step_order ASC LIMIT 1
+      ) AS current_step_order
     FROM workflow_instances wi
     JOIN workflows w ON w.id = wi.workflow_id
     LEFT JOIN users u ON u.id = wi.assignee_id
@@ -391,4 +404,4 @@ export const getLinkedInstances = asyncHandler(async (req: Request, res: Respons
   `, ...params)
 
   res.json(successResponse(rows))
-})
+})  
