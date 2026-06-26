@@ -10,7 +10,7 @@ import {
   updateInstanceStep, updateInstance,
   getLinkedWorkflows, getLinkedInstances,
 } from '../controllers/workflows'
-import { authMiddleware, adminOnly } from '../middleware/auth'
+import { authMiddleware } from '../middleware/auth'
 
 const router = Router()
 router.use(authMiddleware)
@@ -35,8 +35,8 @@ router.patch('/instances/:id/steps/:stepId', updateInstanceStep)
 router.get('/stats',          getWorkflowStats)
 router.get('/',               getWorkflows)
 router.get('/:id',            getWorkflowById)
-router.post('/',              adminOnly, createWorkflow)
-router.put('/:id',            adminOnly, updateWorkflow)
-router.delete('/:id',         adminOnly, deleteWorkflow)
+router.post('/',              createWorkflow)
+router.put('/:id',            updateWorkflow)
+router.delete('/:id',         deleteWorkflow)
 
 export default router
