@@ -330,4 +330,65 @@ export const updateInstanceStep = asyncHandler(async (req: Request, res: Respons
   }
 
   res.json(successResponse(null, 'Đã cập nhật bước'))
+})// ============================================================
+// THÊM VÀO CUỐI server/src/controllers/workflows.ts
+// (giữ nguyên toàn bộ phần code hiện có ở trên, chỉ append thêm)
+// ============================================================
+
+// ═══════════════════════════════════════════════════════════
+// LINKED WORKFLOWS — 4 quy trình đã có module riêng
+// (Phê duyệt BOM, Khảo sát khách hàng, Đề xuất công tác phí, Nghỉ phép)
+// Đọc THẬT từ poms / survey_reports / business_trips / leave_requests
+// qua view, không tạo workflow_instances giả. KHÔNG có create/update/delete
+// ở đây — muốn sửa thì phải vào đúng module gốc (BOM, Khảo sát...).
+// ═══════════════════════════════════════════════════════════
+
+// GET /api/workflows/linked
+// Trả về danh sách 4 "thẻ quy trình" kèm số liệu thật, dùng để
+// hiển thị cạnh các workflow template thật trong dashboard.
+export const getLinkedWorkflows = asyncHandler(async (_req: Request, res: Response) => {
+  const rows = await prisma.$queryRawUnsafe<any[]>(`
+    SELECT * FROM vw_linked_workflow_stats ORDER BY source_key
+  `)
+  const data = rows.map(r => ({
+    linked: true,
+    source_key: r.source_key,
+    name: r.name,
+    category: r.category,
+    color: r.color,
+    icon: r.icon,
+    instance_count: r.instance_count,
+    completed_count: r.completed_count,
+    in_progress_count: r.in_progress_count,
+    cancelled_count: r.cancelled_count,
+    completion_rate: r.completion_rate,
+  }))
+  res.json(successResponse(data))
+})
+
+// GET /api/workflows/linked/instances?source=bom&status=in_progress
+export const getLinkedInstances = asyncHandler(async (req: Request, res: Response) => {
+  const { source, status } = req.query
+
+  const conditions: string[] = ['1=1']
+  const params: unknown[] = []
+
+  if (source) {
+    params.push(source)
+    conditions.push(`source_key = $${params.length}`)
+  }
+  if (status) {
+    params.push(status)
+    conditions.push(`status = $${params.length}`)
+  }
+
+  const where = conditions.join(' AND ')
+  const rows = await prisma.$queryRawUnsafe<any[]>(`
+    SELECT * FROM vw_linked_workflow_instances
+    WHERE ${where}
+    ORDER BY created_at DESC
+    LIMIT 200
+  `, ...params)
+
+  res.json(successResponse(rows))
 })
