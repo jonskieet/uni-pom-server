@@ -111,7 +111,7 @@ export const getMyProgress = asyncHandler(async (req: Request, res: Response) =>
   const userId = (req as any).user?.id
   const userRole = (req as any).user?.role
 
-  if (!userId) throw new AppError('Chưa xác thực', 401)
+  if (!userId) throw new AppError(401, 'Chưa xác thực')
 
   // Điều kiện lọc theo role
   let roleFilter = ''
@@ -276,7 +276,7 @@ export const transitionPomStatus = asyncHandler(async (req: Request, res: Respon
     `SELECT id, status, created_by, assigned_sale_id, sale_admin_id, reviewed_by
      FROM poms WHERE id = $1`, pomId
   )
-  if (!pom.length) throw new AppError('Không tìm thấy BOM', 404)
+  if (!pom.length) throw new AppError(404, 'Không tìm thấy BOM')
   const p = pom[0]
 
   // Bảng chuyển trạng thái hợp lệ
@@ -379,10 +379,10 @@ export const transitionPomStatus = asyncHandler(async (req: Request, res: Respon
   }
 
   const t = TRANSITIONS[action]
-  if (!t) throw new AppError(`Action không hợp lệ: ${action}`, 400)
-  if (!t.roles.includes(role)) throw new AppError('Không có quyền thực hiện hành động này', 403)
+  if (!t) throw new AppError(400, `Action không hợp lệ: ${action}`)
+  if (!t.roles.includes(role)) throw new AppError(403, 'Không có quyền thực hiện hành động này')
   if (p.status !== t.fromStatus)
-    throw new AppError(`BOM đang ở trạng thái "${p.status}", không thể ${action}`, 400)
+    throw new AppError(400, `BOM đang ở trạng thái "${p.status}", không thể ${action}`)
 
   // Cập nhật status
   const extra = t.extraUpdates ?? ''
@@ -440,9 +440,9 @@ export const addConstructionLog = asyncHandler(async (req: Request, res: Respons
   }
 
   if (!['technical', 'technical_lead', 'admin'].includes(role))
-    throw new AppError('Chỉ Kỹ thuật / Trưởng phòng KT mới có quyền', 403)
+    throw new AppError(403, 'Chỉ Kỹ thuật / Trưởng phòng KT mới có quyền')
 
-  if (!title?.trim()) throw new AppError('Thiếu tiêu đề nhật ký', 400)
+  if (!title?.trim()) throw new AppError(400, 'Thiếu tiêu đề nhật ký')
 
   const [row] = await prisma.$queryRawUnsafe<any[]>(
     `INSERT INTO pom_construction_logs (pom_id, log_type, title, content, created_by)

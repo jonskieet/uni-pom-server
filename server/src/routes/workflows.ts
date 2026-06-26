@@ -1,15 +1,15 @@
-// server/src/routes/workflows.ts  (cập nhật – thêm progress routes)
+// server/src/routes/workflows.ts (cập nhật – thêm progress routes)
 
 import { Router } from 'express'
-import { authenticate } from '../middleware/auth'
+import { authMiddleware } from '../middleware/auth'
 
 // Workflow template/instance controllers (cũ)
 import {
   getWorkflows, getWorkflowById, createWorkflow, updateWorkflow, deleteWorkflow,
   getWorkflowStats,
-  getWorkflowInstances, getWorkflowInstanceById, createWorkflowInstance,
-  updateWorkflowInstance, deleteWorkflowInstance,
-  getLinkedWorkflowStats, getLinkedWorkflowInstances,
+  getInstances, getInstanceById, createInstance,
+  updateInstance, updateInstanceStep,
+  getLinkedWorkflows, getLinkedInstances,
 } from '../controllers/workflows'
 
 // Workflow Progress controllers (mới)
@@ -24,26 +24,22 @@ import {
 const router = Router()
 
 // ─── Auth bắt buộc ────────────────────────────────────────────
-router.use(authenticate)
+router.use(authMiddleware)
 
-// ─── WORKFLOW TEMPLATES ───────────────────────────────────────
-router.get('/',         getWorkflows)
-router.get('/stats',    getWorkflowStats)
-router.get('/:id',      getWorkflowById)
-router.post('/',        createWorkflow)
-router.put('/:id',      updateWorkflow)
-router.delete('/:id',   deleteWorkflow)
+// ─── CÁC ROUTE TĨNH / CỤ THỂ PHẢI ĐĂNG KÝ TRƯỚC "/:id" ────────
+// (tránh bug route-ordering: Express khớp theo thứ tự đăng ký,
+//  "/:id" sẽ "ăn" mất "/stats", "/instances", "/linked"... nếu đặt trước)
 
 // ─── WORKFLOW INSTANCES ───────────────────────────────────────
-router.get('/:id/instances',      getWorkflowInstances)
-router.get('/instances/:iid',     getWorkflowInstanceById)
-router.post('/:id/instances',     createWorkflowInstance)
-router.put('/instances/:iid',     updateWorkflowInstance)
-router.delete('/instances/:iid',  deleteWorkflowInstance)
+router.get('/instances',              getInstances)
+router.post('/instances',             createInstance)
+router.get('/instances/:id',          getInstanceById)
+router.put('/instances/:id',          updateInstance)
+router.patch('/instances/:id/steps/:stepId', updateInstanceStep)
 
 // ─── LINKED (BOM / Survey / Trip / Leave) ────────────────────
-router.get('/linked/stats',     getLinkedWorkflowStats)
-router.get('/linked/instances', getLinkedWorkflowInstances)
+router.get('/linked',           getLinkedWorkflows)
+router.get('/linked/instances', getLinkedInstances)
 
 // ─── MY PROGRESS (mới) ───────────────────────────────────────
 // GET  /api/workflows/my-progress          → danh sách BOM user đang có việc
@@ -53,11 +49,18 @@ router.get('/my-progress', getMyProgress)
 router.get('/admin-overview', getAdminOverview)
 
 // ─── POM TRANSITION (mới) ────────────────────────────────────
-// POST /api/poms/:id/transition            → chuyển trạng thái BOM
-// (thêm vào pom routes hoặc dùng riêng dưới đây nếu muốn tách)
-// Nếu muốn đặt ở đây (prefixed /api/workflows/poms/:id):
+// POST /api/workflows/poms/:id/transition            → chuyển trạng thái BOM
 router.post('/poms/:id/transition',           transitionPomStatus)
 router.post('/poms/:id/construction-logs',    addConstructionLog)
 router.get('/poms/:id/construction-logs',     getConstructionLogs)
+
+// ─── WORKFLOW TEMPLATES ───────────────────────────────────────
+// (các route "/:id" này luôn để CUỐI vì khớp mọi đoạn 1 segment)
+router.get('/stats',    getWorkflowStats)
+router.get('/',         getWorkflows)
+router.post('/',        createWorkflow)
+router.get('/:id',      getWorkflowById)
+router.put('/:id',      updateWorkflow)
+router.delete('/:id',   deleteWorkflow)
 
 export default router
