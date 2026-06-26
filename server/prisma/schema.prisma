@@ -245,16 +245,19 @@ model Pom {
 //   → revision_price (Sale Admin định giá lại) → pricing_done
 //   → revision_tech  (Kỹ thuật sửa)           → submitted (TP duyệt lại)
 enum PomStatus {
-  draft           // KT đang soạn
-  submitted       // KT đã nộp, chờ TP KT duyệt
-  tp_approved     // TP KT đã duyệt, chờ Sale Admin định giá
-  pricing_done    // Sale Admin đã định giá, chờ Sale gửi KH
-  sent_to_client  // Sale đã gửi KH, chờ phản hồi
-  negotiating     // KH đang thương lượng
-  revision_price  // Sale gửi trả Sale Admin để sửa giá
-  revision_tech   // Sale gửi trả Kỹ thuật để sửa phương án
-  closed_won      // Chốt thành công
-  closed_lost     // Không chốt được
+  draft              // KT đang soạn
+  submitted          // KT đã nộp, chờ TP KT duyệt
+  tp_approved        // TP KT đã duyệt, chờ Sale Admin định giá
+  pricing_done       // Sale Admin đã định giá, chờ Sale gửi KH
+  sent_to_client     // Sale đã gửi KH, chờ phản hồi
+  negotiating        // KH đang thương lượng
+  revision_price     // Sale gửi trả Sale Admin để sửa giá
+  revision_tech      // Sale gửi trả Kỹ thuật để sửa phương án
+  closed_won         // Chốt thành công – chuẩn bị thi công
+  construction       // Đang thi công
+  inspection         // Đang nghiệm thu
+  project_completed  // Hoàn tất dự án
+  closed_lost        // Không chốt được
 }
 
 // ============================================================
