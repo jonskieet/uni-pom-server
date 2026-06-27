@@ -275,11 +275,16 @@ export const createInstance = asyncHandler(async (req: Request, res: Response) =
     SELECT id FROM workflow_steps WHERE workflow_id = $1 ORDER BY step_order ASC
   `, parseInt(workflow_id))
 
-  for (const s of templateSteps) {
+  // QUAN TRỌNG: bước đầu tiên (step_order nhỏ nhất) phải vào thẳng 'in_progress'
+  // ngay khi tạo phiên — nếu không, KHÔNG bước nào active, "bước hiện tại"
+  // sẽ luôn rỗng và phiên chạy nhìn như đứng im 0% mãi mãi dù đã "Thực hiện".
+  for (let i = 0; i < templateSteps.length; i++) {
+    const s = templateSteps[i]
+    const isFirst = i === 0
     await prisma.$executeRawUnsafe(`
-      INSERT INTO workflow_instance_steps (instance_id, step_id, status)
-      VALUES ($1, $2, 'pending')
-    `, instanceId, s.id)
+      INSERT INTO workflow_instance_steps (instance_id, step_id, status, started_at)
+      VALUES ($1, $2, $3, ${isFirst ? 'NOW()' : 'NULL'})
+    `, instanceId, s.id, isFirst ? 'in_progress' : 'pending')
   }
 
   res.status(201).json(successResponse({ id: instanceId }, 'Đã tạo phiên workflow'))
@@ -312,6 +317,23 @@ export const updateInstanceStep = asyncHandler(async (req: Request, res: Respons
   const stepId = parseInt(req.params.stepId)
   const { status, note, assignee_id } = req.body
 
+  // Lấy trạng thái hiện tại + step_order để biết vị trí bước này trong chuỗi
+  const curRows = await prisma.$queryRawUnsafe<{ cur_status: string; step_order: number }[]>(`
+    SELECT wis.status AS cur_status, ws.step_order
+    FROM workflow_instance_steps wis
+    JOIN workflow_steps ws ON ws.id = wis.step_id
+    WHERE wis.instance_id = $1 AND wis.step_id = $2
+  `, instanceId, stepId)
+  if (!curRows.length) throw new AppError(404, 'Không tìm thấy bước trong phiên này')
+  const { cur_status, step_order } = curRows[0]
+
+  // CHẶN hoàn thành sai thứ tự: chỉ bước đang 'in_progress' (bước hiện tại thật sự)
+  // mới được đánh dấu xong. Tránh tình trạng tick lung tung không theo flow,
+  // khiến "bước hiện tại" mất ý nghĩa.
+  if (status === 'completed' && cur_status !== 'in_progress') {
+    throw new AppError(400, 'Chỉ có thể hoàn thành bước đang chạy hiện tại. Các bước phải thực hiện theo đúng thứ tự.')
+  }
+
   await prisma.$executeRawUnsafe(`
     UPDATE workflow_instance_steps SET
       status      = COALESCE($1, status),
@@ -323,6 +345,38 @@ export const updateInstanceStep = asyncHandler(async (req: Request, res: Respons
     WHERE instance_id = $4 AND step_id = $5
   `, status || null, note !== undefined ? note : null,
      assignee_id || null, instanceId, stepId)
+
+  if (status === 'completed') {
+    // Tự động kích hoạt bước kế tiếp (step_order nhỏ nhất còn 'pending') → 'in_progress'.
+    // Đây là phần engine còn thiếu trước đây: hoàn thành 1 bước phải tự đẩy sang
+    // bước kế, không phải chờ ai đó tự tay set in_progress cho bước sau.
+    const next = await prisma.$queryRawUnsafe<{ step_id: number }[]>(`
+      SELECT wis.step_id FROM workflow_instance_steps wis
+      JOIN workflow_steps ws ON ws.id = wis.step_id
+      WHERE wis.instance_id = $1 AND wis.status = 'pending'
+      ORDER BY ws.step_order ASC LIMIT 1
+    `, instanceId)
+    if (next.length) {
+      await prisma.$executeRawUnsafe(`
+        UPDATE workflow_instance_steps SET status = 'in_progress', started_at = NOW(), updated_at = NOW()
+        WHERE instance_id = $1 AND step_id = $2
+      `, instanceId, next[0].step_id)
+    }
+  } else if (status === 'in_progress') {
+    // Hoàn tác: nếu trước đó hệ thống đã auto-activate (các) bước phía sau,
+    // phải trả các bước đó về 'pending' để không có 2 bước cùng "đang chạy".
+    await prisma.$executeRawUnsafe(`
+      UPDATE workflow_instance_steps wis2 SET status = 'pending', started_at = NULL, updated_at = NOW()
+      FROM workflow_steps ws2
+      WHERE wis2.step_id = ws2.id AND wis2.instance_id = $1
+        AND ws2.step_order > $2 AND wis2.status = 'in_progress'
+    `, instanceId, step_order)
+    // Nếu phiên đã từng được tự đóng 'completed', mở lại vì giờ có bước chưa xong
+    await prisma.$executeRawUnsafe(`
+      UPDATE workflow_instances SET status = 'in_progress', completed_at = NULL, updated_at = NOW()
+      WHERE id = $1 AND status = 'completed'
+    `, instanceId)
+  }
 
   // Auto-complete instance nếu tất cả required steps đã done
   const pending = await prisma.$queryRawUnsafe<{ cnt: number }[]>(`
@@ -404,4 +458,4 @@ export const getLinkedInstances = asyncHandler(async (req: Request, res: Respons
   `, ...params)
 
   res.json(successResponse(rows))
-})  
+})
