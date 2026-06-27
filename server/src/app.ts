@@ -30,19 +30,39 @@ import workflowRoutes      from './routes/workflows'       // ← Workflow Modul
 export function createApp(): Express {
   const app = express()
 
+  // ── Health check — đặt TRƯỚC helmet/cors, luôn cho phép mọi origin ──────
+  // Đây chỉ là endpoint "đánh thức" server (Splash screen gọi để wake Render
+  // free-tier), không trả dữ liệu nhạy cảm, nên không phụ thuộc CORS_ORIGIN.
+  // Quan trọng: app Electron đóng gói chạy từ file:// thường gửi Origin:
+  // "null" — nếu CORS_ORIGIN bên dưới chưa được set đúng domain thật (ví dụ
+  // vẫn còn để placeholder trong render.yaml), request này sẽ luôn bị CORS
+  // chặn và splash sẽ báo "mất kết nối" mãi dù server đã thức xong.
+  app.get('/health', cors(), (_req: Request, res: Response) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  })
+
   app.use(helmet())
   app.use(
     cors({
-      origin: process.env.CORS_ORIGIN?.split(',') || '*',
+      origin: (origin, callback) => {
+        const allowList = (process.env.CORS_ORIGIN ?? '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+
+        // Cho phép: không có Origin header (curl/Postman/một số request từ
+        // Electron), Origin === "null" (Electron load từ file://), chưa cấu
+        // hình CORS_ORIGIN (mặc định mở), hoặc origin nằm trong whitelist.
+        if (!origin || origin === 'null' || allowList.length === 0 || allowList.includes(origin)) {
+          return callback(null, true)
+        }
+        return callback(new Error('Not allowed by CORS'))
+      },
       credentials: true
     })
   )
   app.use(express.json())
   app.use(express.urlencoded({ extended: true }))
-
-  app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() })
-  })
 
   // ── Routes ─────────────────────────────────────────────────
   app.use('/api/auth',           authRoutes)
