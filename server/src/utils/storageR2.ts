@@ -49,6 +49,10 @@ function getClient(): S3Client {
       accessKeyId: ACCESS_KEY,
       secretAccessKey: SECRET_KEY,
     },
+    // R2 không tương thích với checksum tự động (CRC32) của AWS SDK v3 mới
+    // → gây lỗi SignatureDoesNotMatch. Tắt đi.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
   })
   return _client
 }
