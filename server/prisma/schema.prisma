@@ -245,19 +245,16 @@ model Pom {
 //   → revision_price (Sale Admin định giá lại) → pricing_done
 //   → revision_tech  (Kỹ thuật sửa)           → submitted (TP duyệt lại)
 enum PomStatus {
-  draft              // KT đang soạn
-  submitted          // KT đã nộp, chờ TP KT duyệt
-  tp_approved        // TP KT đã duyệt, chờ Sale Admin định giá
-  pricing_done       // Sale Admin đã định giá, chờ Sale gửi KH
-  sent_to_client     // Sale đã gửi KH, chờ phản hồi
-  negotiating        // KH đang thương lượng
-  revision_price     // Sale gửi trả Sale Admin để sửa giá
-  revision_tech      // Sale gửi trả Kỹ thuật để sửa phương án
-  closed_won         // Chốt thành công – chuẩn bị thi công
-  construction       // Đang thi công
-  inspection         // Đang nghiệm thu
-  project_completed  // Hoàn tất dự án
-  closed_lost        // Không chốt được
+  draft           // KT đang soạn
+  submitted       // KT đã nộp, chờ TP KT duyệt
+  tp_approved     // TP KT đã duyệt, chờ Sale Admin định giá
+  pricing_done    // Sale Admin đã định giá, chờ Sale gửi KH
+  sent_to_client  // Sale đã gửi KH, chờ phản hồi
+  negotiating     // KH đang thương lượng
+  revision_price  // Sale gửi trả Sale Admin để sửa giá
+  revision_tech   // Sale gửi trả Kỹ thuật để sửa phương án
+  closed_won      // Chốt thành công
+  closed_lost     // Không chốt được
 }
 
 // ============================================================
@@ -343,6 +340,17 @@ model SurveyReport {
   image_url        String?
   form_template_id Int?
   form_data        Json?
+
+  // ── File Word upload (Cloudflare R2) ──────────────────────
+  // Thay thế / bổ sung cho form_data: kỹ thuật có thể soạn báo cáo
+  // trực tiếp trong Word (không bị giới hạn định dạng/ảnh như form)
+  // rồi upload lên đây thay vì điền form online.
+  word_file_key         String?    // object key trong bucket R2
+  word_file_name        String?    // tên file gốc do người dùng upload
+  word_file_size        Int?       // bytes
+  word_file_uploaded_by Int?
+  word_file_uploaded_at DateTime?
+
   created_at       DateTime     @default(now())
   updated_at       DateTime     @updatedAt
 

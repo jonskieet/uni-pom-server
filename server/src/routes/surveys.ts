@@ -24,7 +24,14 @@ import {
   deleteSurvey,
 } from '../controllers/surveys'
 import { exportSurveyWord } from '../controllers/surveyExport'
-import { authMiddleware } from '../middleware/auth'
+import {
+  uploadSurveyWordFile,
+  downloadSurveyWordFile,
+  previewSurveyWordFile,
+  deleteSurveyWordFile,
+} from '../controllers/surveyWordFile'
+import { authMiddleware, technicalRoles, adminTechnicalOrSales } from '../middleware/auth'
+import { uploadWordSingle } from '../middleware/uploadWord'
 
 const router = Router()
 
@@ -32,6 +39,15 @@ router.use(authMiddleware)
 
 router.get('/', getSurveys)
 router.get('/:id/export-word', exportSurveyWord)   // ← THÊM MỚI — phải đặt trước /:id
+
+// File Word upload (.docx) — thay thế/bổ sung cho form online ────────────
+// Upload: technical/technical_lead/admin (người tạo & quản lý nội dung khảo sát)
+// Xem/Xuất: + sales_admin, sales (đúng yêu cầu: trưởng phòng KT, sale admin, sale)
+router.post('/:id/word-file',         technicalRoles,      uploadWordSingle, uploadSurveyWordFile)
+router.get('/:id/word-file',          adminTechnicalOrSales, downloadSurveyWordFile)
+router.get('/:id/word-file/preview',  adminTechnicalOrSales, previewSurveyWordFile)
+router.delete('/:id/word-file',       technicalRoles,      deleteSurveyWordFile)
+
 router.get('/:id', getSurveyById)
 router.post('/', createSurvey)
 router.put('/:id', updateSurvey)
