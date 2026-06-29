@@ -116,5 +116,52 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
     }
   })
 
+  // Tài khoản bị khoá sau khi token đã phát hành → chặn truy cập ngay,
+  // quan trọng cho luồng tự-động-đăng-nhập-lại (token cũ vẫn còn hạn).
+  if (!user.is_active) {
+    throw new AppError(403, 'User account is disabled')
+  }
+
   res.json(successResponse(user))
+})
+
+/**
+ * POST /auth/refresh
+ * Cấp lại token mới (hạn 30 ngày) dựa trên token hiện tại còn hợp lệ.
+ * Dùng khi app khởi động để âm thầm "trượt" hạn token (sliding session),
+ * tránh việc người dùng bị đăng xuất giữa lúc đang dùng app dở dang.
+ */
+export const refreshToken = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id
+  if (!userId) {
+    throw new AppError(401, 'Unauthorized')
+  }
+
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } })
+
+  if (!user.is_active) {
+    throw new AppError(403, 'User account is disabled')
+  }
+
+  const payload: JwtPayload = {
+    id: user.id,
+    username: user.username,
+    role: user.role
+  }
+
+  const token = generateToken(payload)
+
+  res.json(
+    successResponse({
+      token,
+      user: {
+        id:         user.id,
+        username:   user.username,
+        full_name:  user.full_name,
+        role:       user.role,
+        avatar_url: user.avatar_url ?? null,
+        email:      user.email ?? null
+      }
+    })
+  )
 })

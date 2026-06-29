@@ -15,7 +15,7 @@ export interface JwtPayload {
 /**
  * Tạo JWT token từ user data
  */
-export function generateToken(payload: JwtPayload, expiresIn: string | number = '24h'): string {
+export function generateToken(payload: JwtPayload, expiresIn: string | number = '30d'): string {
   const options: SignOptions = { expiresIn: expiresIn as any }
   return jwt.sign(payload, JWT_SECRET as string, options)
 }
