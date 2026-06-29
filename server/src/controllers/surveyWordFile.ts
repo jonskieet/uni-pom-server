@@ -39,6 +39,11 @@ export const uploadSurveyWordFile = asyncHandler(async (req: Request, res: Respo
   if (!userId) throw new AppError(401, 'Unauthorized')
   if (!req.file) throw new AppError(400, 'Không có file được upload (field name: file)')
 
+  // FIX: multer/busboy decode tên file gốc theo latin1 mặc định, nên tên
+  // file có dấu tiếng Việt (UTF-8) bị hiển thị sai (mojibake, vd "Tá»£ trÃ¬nh...").
+  // Re-decode lại đúng chiều utf8 để lưu/tải về hiển thị đúng dấu.
+  const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
+
   const survey = await prisma.surveyReport.findUnique({ where: { id: reportId } })
   if (!survey) throw new AppError(404, 'Không tìm thấy phiếu khảo sát')
 
@@ -47,14 +52,14 @@ export const uploadSurveyWordFile = asyncHandler(async (req: Request, res: Respo
     await deleteWordFile(survey.word_file_key)
   }
 
-  const key = buildWordFileKey(survey.report_code, req.file.originalname)
+  const key = buildWordFileKey(survey.report_code, originalName)
   await uploadWordFile(key, req.file.buffer, req.file.mimetype || DOCX_MIME)
 
   const updated = await prisma.surveyReport.update({
     where: { id: reportId },
     data: {
       word_file_key: key,
-      word_file_name: req.file.originalname,
+      word_file_name: originalName,
       word_file_size: req.file.size,
       word_file_uploaded_by: userId,
       word_file_uploaded_at: new Date(),
