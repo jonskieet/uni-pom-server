@@ -417,6 +417,14 @@ export const transitionPomStatus = asyncHandler(async (req: Request, res: Respon
     )
   }
 
+  // Đồng bộ tiến độ sang phiên workflow engine đang liên kết BOM này (nếu có).
+  // Không chặn response nếu lỗi đồng bộ — BOM vẫn là nguồn sự thật chính.
+  try {
+    await syncPomLinkedInstance(pomId)
+  } catch (err) {
+    console.error('[workflow] syncPomLinkedInstance lỗi:', err)
+  }
+
   res.json(successResponse({
     id: pomId,
     from_status: p.status,
@@ -424,6 +432,78 @@ export const transitionPomStatus = asyncHandler(async (req: Request, res: Respon
     status_label: STATUS_LABEL[t.toStatus],
   }))
 })
+
+// ─────────────────────────────────────────────────────────────
+// Đồng bộ 1 phiên workflow_instances đang liên kết (pom_id = pomId)
+// với trạng thái thật của BOM.
+//
+// Cách tính: BOM có 5 giai đoạn (STATUS_TO_PHASE, 1..5). Phiên engine
+// có N bước tuỳ template. Ta quy đổi tỉ lệ: số bước đã "hoàn thành"
+// = round(N * (phase-1) / 5), bước kế tiếp (nếu còn) chuyển in_progress,
+// phần còn lại ở pending. Khi BOM đóng (project_completed) → hoàn tất
+// toàn bộ + đóng phiên; khi closed_lost → huỷ phiên.
+//
+// Đây là đồng bộ MỘT CHIỀU: BOM → workflow_instance. Không có chiều
+// ngược lại — không cho tick tay phiên liên kết (chặn ở updateInstanceStep).
+// ─────────────────────────────────────────────────────────────
+export async function syncPomLinkedInstance(pomId: number): Promise<void> {
+  const pomRows = await prisma.$queryRawUnsafe<{ status: string }[]>(
+    `SELECT status FROM poms WHERE id = $1`, pomId
+  )
+  if (!pomRows.length) return
+  const pomStatus = pomRows[0].status
+
+  const instRows = await prisma.$queryRawUnsafe<{ id: number; workflow_id: number }[]>(
+    `SELECT id, workflow_id FROM workflow_instances WHERE pom_id = $1 AND status = 'in_progress'`,
+    pomId
+  )
+  if (!instRows.length) return // không có phiên nào đang liên kết — không cần làm gì
+
+  const phase = STATUS_TO_PHASE[pomStatus] ?? 1
+  const isClosedLost = pomStatus === 'closed_lost'
+  const isCompleted  = pomStatus === 'project_completed'
+
+  for (const inst of instRows) {
+    const steps = await prisma.$queryRawUnsafe<{ step_id: number; step_order: number }[]>(
+      `SELECT id AS step_id, step_order FROM workflow_steps WHERE workflow_id = $1 ORDER BY step_order ASC`,
+      inst.workflow_id
+    )
+    if (!steps.length) continue
+
+    const n = steps.length
+    const completedCount = isCompleted ? n : Math.min(n, Math.round(n * (phase - 1) / 5))
+
+    for (let i = 0; i < n; i++) {
+      const s = steps[i]
+      let status: string
+      if (isCompleted || i < completedCount) status = 'completed'
+      else if (i === completedCount && !isClosedLost) status = 'in_progress'
+      else status = 'pending'
+
+      await prisma.$executeRawUnsafe(
+        `UPDATE workflow_instance_steps SET
+           status = $1,
+           started_at   = CASE WHEN $1 IN ('in_progress','completed') AND started_at IS NULL THEN NOW() ELSE started_at END,
+           completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE NULL END,
+           updated_at   = NOW()
+         WHERE instance_id = $2 AND step_id = $3`,
+        status, inst.id, s.step_id
+      )
+    }
+
+    if (isCompleted) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE workflow_instances SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        inst.id
+      )
+    } else if (isClosedLost) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE workflow_instances SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+        inst.id
+      )
+    }
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/poms/:id/construction-logs

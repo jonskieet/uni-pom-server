@@ -192,6 +192,10 @@ export const getInstances = asyncHandler(async (req: Request, res: Response) => 
   const sql = `
     SELECT wi.*, w.name AS workflow_name, w.color, w.icon,
       u.full_name AS assignee_name, c.full_name AS creator_name,
+      p.pom_code      AS pom_code,
+      p.project_name  AS pom_project_name,
+      p.customer_name AS pom_customer_name,
+      p.status        AS pom_status,
       COUNT(wis.id)::int AS total_steps,
       COUNT(CASE WHEN wis.status='completed' THEN 1 END)::int AS done_steps,
       -- Bước đang chạy hiện tại
@@ -211,9 +215,10 @@ export const getInstances = asyncHandler(async (req: Request, res: Response) => 
     JOIN workflows w ON w.id = wi.workflow_id
     LEFT JOIN users u ON u.id = wi.assignee_id
     LEFT JOIN users c ON c.id = wi.created_by
-    LEFT JOIN workflow_instance_steps wis ON wis.instance_id = wi.id
+    LEFT JOIN poms p ON p.id = wi.pom_id
     WHERE ${where}
-    GROUP BY wi.id, w.name, w.color, w.icon, u.full_name, c.full_name
+    GROUP BY wi.id, w.name, w.color, w.icon, u.full_name, c.full_name,
+             p.pom_code, p.project_name, p.customer_name, p.status
     ORDER BY wi.created_at DESC
   `
   const rows = await prisma.$queryRawUnsafe<any[]>(sql, ...params)
@@ -229,11 +234,16 @@ export const getInstanceById = asyncHandler(async (req: Request, res: Response) 
   const id = parseInt(req.params.id)
   const rows = await prisma.$queryRawUnsafe<any[]>(`
     SELECT wi.*, w.name AS workflow_name, w.color, w.icon,
-      u.full_name AS assignee_name, c.full_name AS creator_name
+      u.full_name AS assignee_name, c.full_name AS creator_name,
+      p.pom_code      AS pom_code,
+      p.project_name  AS pom_project_name,
+      p.customer_name AS pom_customer_name,
+      p.status        AS pom_status
     FROM workflow_instances wi
     JOIN workflows w ON w.id = wi.workflow_id
     LEFT JOIN users u ON u.id = wi.assignee_id
     LEFT JOIN users c ON c.id = wi.created_by
+    LEFT JOIN poms p ON p.id = wi.pom_id
     WHERE wi.id = $1
   `, id)
   if (!rows.length) throw new AppError(404, 'Không tìm thấy phiên')
@@ -253,7 +263,7 @@ export const getInstanceById = asyncHandler(async (req: Request, res: Response) 
 
 // POST /api/workflows/instances
 export const createInstance = asyncHandler(async (req: Request, res: Response) => {
-  const { workflow_id, title, description, priority, assignee_id, due_date } = req.body
+  const { workflow_id, title, description, priority, assignee_id, due_date, pom_id } = req.body
   const userId = (req as any).user?.id ?? null
 
   if (!workflow_id || !title?.trim()) throw new AppError(400, 'workflow_id và title là bắt buộc')
@@ -261,13 +271,27 @@ export const createInstance = asyncHandler(async (req: Request, res: Response) =
   const wf = await prisma.$queryRawUnsafe<any[]>(`SELECT id FROM workflows WHERE id = $1`, parseInt(workflow_id))
   if (!wf.length) throw new AppError(404, 'Workflow không tồn tại')
 
+  // Nếu có liên kết BOM: kiểm tra BOM tồn tại và chưa có phiên nào
+  // đang chạy liên kết sẵn (tránh 2 phiên cùng theo dõi 1 BOM).
+  let pomIdNum: number | null = null
+  if (pom_id) {
+    pomIdNum = parseInt(pom_id)
+    const pom = await prisma.$queryRawUnsafe<any[]>(`SELECT id FROM poms WHERE id = $1`, pomIdNum)
+    if (!pom.length) throw new AppError(404, 'BOM không tồn tại')
+
+    const existing = await prisma.$queryRawUnsafe<any[]>(`
+      SELECT id FROM workflow_instances WHERE pom_id = $1 AND status = 'in_progress'
+    `, pomIdNum)
+    if (existing.length) throw new AppError(400, 'BOM này đã có 1 phiên workflow đang liên kết chạy')
+  }
+
   const result = await prisma.$queryRawUnsafe<{ id: number }[]>(`
     INSERT INTO workflow_instances
-      (workflow_id, title, description, priority, assignee_id, due_date, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6::date,$7)
+      (workflow_id, title, description, priority, assignee_id, due_date, created_by, pom_id)
+    VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8)
     RETURNING id
   `, parseInt(workflow_id), title.trim(), description || null,
-     priority || 'normal', assignee_id || null, due_date || null, userId)
+     priority || 'normal', assignee_id || null, due_date || null, userId, pomIdNum)
 
   const instanceId = result[0].id
 
@@ -278,13 +302,23 @@ export const createInstance = asyncHandler(async (req: Request, res: Response) =
   // QUAN TRỌNG: bước đầu tiên (step_order nhỏ nhất) phải vào thẳng 'in_progress'
   // ngay khi tạo phiên — nếu không, KHÔNG bước nào active, "bước hiện tại"
   // sẽ luôn rỗng và phiên chạy nhìn như đứng im 0% mãi mãi dù đã "Thực hiện".
+  //
+  // Ngoại lệ: phiên liên kết BOM (pom_id != null) KHÔNG tick tay — tiến độ của
+  // nó được đồng bộ tự động từ trạng thái BOM (xem syncPomLinkedInstance trong
+  // workflowProgress.ts, được gọi mỗi khi BOM chuyển trạng thái).
   for (let i = 0; i < templateSteps.length; i++) {
     const s = templateSteps[i]
-    const isFirst = i === 0
+    const isFirst = i === 0 && !pomIdNum
     await prisma.$executeRawUnsafe(`
       INSERT INTO workflow_instance_steps (instance_id, step_id, status, started_at)
       VALUES ($1, $2, $3, ${isFirst ? 'NOW()' : 'NULL'})
     `, instanceId, s.id, isFirst ? 'in_progress' : 'pending')
+  }
+
+  // Nếu phiên liên kết BOM: đồng bộ ngay tiến độ hiện tại của BOM vào phiên
+  if (pomIdNum) {
+    const { syncPomLinkedInstance } = await import('./workflowProgress')
+    await syncPomLinkedInstance(pomIdNum)
   }
 
   res.status(201).json(successResponse({ id: instanceId }, 'Đã tạo phiên workflow'))
@@ -321,6 +355,15 @@ export const updateInstanceStep = asyncHandler(async (req: Request, res: Respons
   // Validate: rejected phải có lý do
   if (status === 'rejected' && !note?.trim()) {
     throw new AppError(400, 'Bước bị trả về phải có lý do (note bắt buộc)')
+  }
+
+  // Phiên liên kết BOM: tiến độ đồng bộ tự động, không cho tick tay qua API
+  const instRows = await prisma.$queryRawUnsafe<{ pom_id: number | null }[]>(`
+    SELECT pom_id FROM workflow_instances WHERE id = $1
+  `, instanceId)
+  if (!instRows.length) throw new AppError(404, 'Không tìm thấy phiên')
+  if (instRows[0].pom_id) {
+    throw new AppError(400, 'Phiên này liên kết với BOM — trạng thái tự động đồng bộ, không thể tick tay')
   }
 
   // Lấy trạng thái hiện tại + step_order + step_type để biết vị trí bước này trong chuỗi
