@@ -216,6 +216,7 @@ export const getInstances = asyncHandler(async (req: Request, res: Response) => 
     LEFT JOIN users u ON u.id = wi.assignee_id
     LEFT JOIN users c ON c.id = wi.created_by
     LEFT JOIN poms p ON p.id = wi.pom_id
+    LEFT JOIN workflow_instance_steps wis ON wis.instance_id = wi.id
     WHERE ${where}
     GROUP BY wi.id, w.name, w.color, w.icon, u.full_name, c.full_name,
              p.pom_code, p.project_name, p.customer_name, p.status
