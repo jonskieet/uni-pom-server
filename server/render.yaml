@@ -19,6 +19,15 @@ services:
         sync: false  # Add manually via Render dashboard
       - key: CORS_ORIGIN
         value: https://your-electron-app-domain.com
+      # ── Cloudflare R2 — lưu file Word (.docx) báo cáo khảo sát ──
+      - key: R2_ACCOUNT_ID
+        sync: false  # Add manually via Render dashboard
+      - key: R2_ACCESS_KEY_ID
+        sync: false  # Add manually via Render dashboard
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false  # Add manually via Render dashboard
+      - key: R2_BUCKET_NAME
+        sync: false  # Add manually via Render dashboard
     disk:
       name: data
       mountPath: /data

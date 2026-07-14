@@ -22,6 +22,8 @@ import {
   updateSurveyItem,
   deleteSurveyItem,
   deleteSurvey,
+  getSurveySyncDiff,
+  syncSurveyItems,
 } from '../controllers/surveys'
 import { exportSurveyWord } from '../controllers/surveyExport'
 import {
@@ -58,5 +60,9 @@ router.put('/items/:itemId', updateSurveyItem)
 router.delete('/items/:itemId', deleteSurveyItem)
 router.post('/:id/items', addSurveyItem)
 router.put('/:id/items', upsertSurveyItems)
+
+// Đồng bộ danh sách thiết bị với POM ─────────────────────────────
+router.get('/:id/sync-diff', getSurveySyncDiff)
+router.post('/:id/sync',     syncSurveyItems)
 
 export default router

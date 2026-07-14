@@ -714,6 +714,9 @@ export const upsertPomItems = asyncHandler(async (req: Request, res: Response) =
         sort_order: item.sort_order ?? idx,
       })),
     }),
+    // Đánh dấu thời điểm danh sách thiết bị thay đổi — phiếu khảo sát
+    // liên kết sẽ dùng mốc này để phát hiện lệch dữ liệu và nhắc đồng bộ.
+    prisma.pom.update({ where: { id: pomId }, data: { items_updated_at: new Date() } }),
   ])
 
   const pom = await prisma.pom.findUnique({
@@ -742,6 +745,8 @@ export const addPomItem = asyncHandler(async (req: Request, res: Response) => {
     include: { product: { include: { brand: true, category: true } } },
   })
 
+  await prisma.pom.update({ where: { id: pomId }, data: { items_updated_at: new Date() } })
+
   res.status(201).json(successResponse(item))
 })
 
@@ -761,11 +766,14 @@ export const updatePomItem = asyncHandler(async (req: Request, res: Response) =>
     include: { product: { include: { brand: true, category: true } } },
   })
 
+  await prisma.pom.update({ where: { id: item.pom_id }, data: { items_updated_at: new Date() } })
+
   res.json(successResponse(item))
 })
 
 export const deletePomItem = asyncHandler(async (req: Request, res: Response) => {
-  await prisma.pomItem.delete({ where: { id: parseInt(req.params.itemId) } })
+  const item = await prisma.pomItem.delete({ where: { id: parseInt(req.params.itemId) } })
+  await prisma.pom.update({ where: { id: item.pom_id }, data: { items_updated_at: new Date() } })
   res.json(successResponse(null, 'Item đã được xóa'))
 })
 

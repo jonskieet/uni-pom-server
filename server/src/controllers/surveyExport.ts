@@ -47,6 +47,67 @@ interface FormField {
 // BASE_FIELDS keys — luôn có trong mọi form
 const BASE_KEYS = ['unit_name', 'survey_date', 'surveyor_name', 'site_address']
 
+// Các field key kiểu cũ (form_data) từng dùng để nhập tay danh sách thiết
+// bị đề xuất — nay đã bị thay bằng bảng thiết bị lấy LIVE từ POM (xem
+// renderDeviceTable). Lọc các key này ra khỏi customFields/fallback để
+// không render trùng 2 bảng thiết bị trong 1 file Word.
+const DEVICE_TABLE_KEYS = ['proposed_devices', 'danh_sach_thiet_bi', 'thiet_bi_de_xuat']
+
+/**
+ * Render bảng "Danh sách thiết bị đề xuất" LIVE từ SurveyItem + PomItem/Product.
+ * Đây là nguồn dữ liệu duy nhất cho bảng thiết bị trong file Word xuất ra —
+ * không đọc từ form_data nữa, nên không còn tình trạng lệch với POM hay phải
+ * gõ lại tay khi POM thay đổi (chỉ cần bấm "Đồng bộ" trong app rồi xuất lại).
+ */
+function renderDeviceTable(items: any[]): Table {
+  const activeItems = items.filter(i => !i.is_removed_from_pom)
+  const cols = [
+    { label: 'STT',            w: 500  },
+    { label: 'Tên thiết bị',   w: 4200 },
+    { label: 'SL đề xuất',     w: 1400 },
+    { label: 'SL thực tế',     w: 1400 },
+    { label: 'Vị trí lắp đặt', w: 2200 },
+    { label: 'Ghi chú',        w: 0    }, // lấy phần dư
+  ]
+  const fixedW = cols.reduce((s, c) => s + c.w, 0)
+  cols[cols.length - 1].w = CONTENT_W - fixedW
+
+  const rows = activeItems.map((item, idx) => {
+    const productName = item.pomItem?.product?.name ?? item.product?.name ?? item.product_name ?? '—'
+    const proposedQty = item.pomItem?.quantity != null ? String(item.pomItem.quantity) : '—'
+    return new TableRow({
+      children: [
+        tdCell(String(idx + 1), cols[0].w, true),
+        tdCell(productName, cols[1].w),
+        tdCell(proposedQty, cols[2].w, true),
+        tdCell(String(item.quantity_actual ?? 0), cols[3].w, true),
+        tdCell(item.location ?? '', cols[4].w),
+        tdCell(item.condition_note ?? '', cols[5].w),
+      ],
+    })
+  })
+
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: cols.map(c => c.w),
+    rows: [
+      new TableRow({ tableHeader: true, children: cols.map(c => thCell(c.label, c.w)) }),
+      ...(rows.length > 0 ? rows : [new TableRow({ children: [
+        new TableCell({
+          columnSpan: cols.length,
+          width: { size: CONTENT_W, type: WidthType.DXA },
+          borders: bordersThin(),
+          margins: { top: 80, bottom: 80, left: 160, right: 160 },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [run('(Chưa có thiết bị nào)', { italics: true, color: '9E9E9E', size: 18 })],
+          })],
+        }),
+      ] })]),
+    ],
+  })
+}
+
 // ─── Page layout constants (A4) ───────────────────────────────
 
 const PAGE_W    = 11906
@@ -388,7 +449,7 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
     include: {
       pom: true,
       creator: true,
-      items: { include: { product: true }, orderBy: { sort_order: 'asc' } },
+      items: { include: { product: true, pomItem: { include: { product: true } } }, orderBy: { sort_order: 'asc' } },
     },
   })
 
@@ -427,8 +488,9 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
   if (!fd.surveyor_name) fd.surveyor_name= survey.surveyor_name ?? ''
   if (!fd.site_address)  fd.site_address = survey.site_address  ?? ''
 
-  // Lọc bỏ BASE_FIELDS khỏi templateFields để tránh render 2 lần
-  const customFields = templateFields.filter(f => !BASE_KEYS.includes(f.key))
+  // Lọc bỏ BASE_FIELDS + field bảng thiết bị kiểu cũ khỏi templateFields
+  // (bảng thiết bị nay render riêng từ SurveyItem, xem renderDeviceTable)
+  const customFields = templateFields.filter(f => !BASE_KEYS.includes(f.key) && !DEVICE_TABLE_KEYS.includes(f.key))
 
   // ── Nhận diện URL ảnh trong các giá trị text thô (form cũ / LAN
   // hardcode không khai báo field type='image' nhưng vẫn lưu URL ảnh
@@ -486,7 +548,7 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
     ? await renderFields(customFields, fd)
     : []
 
-  const fallbackKeys = Object.keys(fd).filter(k => !BASE_KEYS.includes(k))
+  const fallbackKeys = Object.keys(fd).filter(k => !BASE_KEYS.includes(k) && !DEVICE_TABLE_KEYS.includes(k))
   const fallbackElements = customFields.length === 0 && fallbackKeys.length > 0
     ? (await Promise.all(fallbackKeys.map(k => renderRawValue(k, fd[k])))).flat()
     : []
@@ -561,6 +623,14 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
             ]
           : []
         ),
+
+        // ── III. DANH SÁCH THIẾT BỊ ĐỀ XUẤT (LIVE từ POM) ─────
+        // Nguồn dữ liệu duy nhất: SurveyItem liên kết PomItem — không đọc
+        // từ form_data nên luôn khớp với POM tại thời điểm xuất file.
+        sectionHeading('III. Danh sách thiết bị đề xuất'),
+        new Paragraph({ spacing: { before: 80, after: 80 }, children: [] }),
+        renderDeviceTable(survey.items as any[]),
+        new Paragraph({ spacing: { before: 0, after: 0 }, children: [] }),
 
         // ── Ghi chú chung ─────────────────────────────────────
         ...(survey.general_note ? [

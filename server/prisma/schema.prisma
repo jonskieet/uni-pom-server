@@ -217,6 +217,8 @@ model Pom {
   revision_count  Int       @default(0)         // Số lần sửa (cho Admin KPI)
   exported_at     DateTime?
   closed_at       DateTime?                     // Khi chốt hoặc lost (mới v2)
+  items_updated_at DateTime?                    // NEW: cập nhật mỗi khi PomItem (thiết bị) bị thêm/sửa/xoá
+                                                  //      dùng để phiếu khảo sát phát hiện lệch dữ liệu
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
@@ -271,8 +273,9 @@ model PomItem {
   note          String?
   sort_order    Int     @default(0)
 
-  pom     Pom     @relation(fields: [pom_id], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  pom         Pom          @relation(fields: [pom_id], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  surveyItems SurveyItem[] // NEW: các dòng phiếu khảo sát tham chiếu tới thiết bị POM này
 
   @@index([pom_id])
   @@index([product_id])
@@ -351,6 +354,10 @@ model SurveyReport {
   word_file_uploaded_by Int?
   word_file_uploaded_at DateTime?
 
+  // ── Đồng bộ danh sách thiết bị với POM ─────────────────────
+  items_synced_at DateTime?  // Lần gần nhất danh sách thiết bị được snapshot/đồng bộ từ PomItem
+                              // So sánh với Pom.items_updated_at để phát hiện lệch dữ liệu
+
   created_at       DateTime     @default(now())
   updated_at       DateTime     @updatedAt
 
@@ -372,21 +379,29 @@ enum SurveyStatus {
 // SURVEY ITEMS
 // ============================================================
 model SurveyItem {
-  id                Int     @id @default(autoincrement())
+  id                Int      @id @default(autoincrement())
   report_id         Int
-  product_id        Int?
-  product_name      String
-  quantity_proposed Int     @default(0)
-  quantity_actual   Int     @default(0)
-  unit              String  @default("Cái")
+  pom_item_id       Int?     // NEW: tham chiếu thiết bị gốc trong POM (nguồn dữ liệu chính)
+                              // product_name / quantity_proposed / unit KHÔNG lưu ở đây nữa —
+                              // luôn đọc live qua pomItem.product / pomItem.quantity để không
+                              // bao giờ bị lệch với POM.
+  product_id        Int?     // Chỉ dùng cho thiết bị khảo sát thêm thủ công, KHÔNG có trong POM
+                              // (ví dụ phát sinh thực tế ngoài dự trù)
+  product_name      String?  // Chỉ dùng khi pom_item_id = null (thiết bị tự thêm, không có product_id)
+  quantity_actual   Int      @default(0)
+  unit              String   @default("Cái")
   location          String?
   condition_note    String?
-  sort_order        Int     @default(0)
+  is_removed_from_pom Boolean @default(false) // NEW: thiết bị này đã bị xoá khỏi POM sau khi khảo sát
+                                                // (giữ lại lịch sử khảo sát thực tế, không xoá cứng)
+  sort_order        Int      @default(0)
 
   report  SurveyReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  pomItem PomItem?     @relation(fields: [pom_item_id], references: [id], onDelete: SetNull)
   product Product?     @relation(fields: [product_id], references: [id], onDelete: SetNull)
 
   @@index([report_id])
+  @@index([pom_item_id])
   @@map("survey_items")
 }
 

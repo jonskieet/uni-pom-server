@@ -45,6 +45,13 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
     return
   }
 
+  // Prisma validation error (invalid enum value, wrong type, missing required field)
+  if (err.name === 'PrismaClientValidationError') {
+    const detail = err.message.split('\n').filter(Boolean).pop() ?? err.message
+    res.status(400).json(errorResponse(`Dữ liệu không hợp lệ: ${detail}`))
+    return
+  }
+
   res.status(500).json(errorResponse('Internal server error'))
 }
 
