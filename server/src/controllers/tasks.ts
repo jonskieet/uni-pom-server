@@ -1120,10 +1120,20 @@ export const addComment = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError(403, 'Bạn không có quyền bình luận trong nhiệm vụ này')
   }
 
-  const [comment] = await prisma.$queryRaw<any[]>`
+  const [inserted] = await prisma.$queryRaw<any[]>`
     INSERT INTO task_comments (task_id, user_id, content)
     VALUES (${taskId}, ${userId}, ${content.trim()})
     RETURNING *
+  `
+
+  // Join user info ngay khi tạo, để tránh avatar hiện dấu "?" cho tới khi
+  // polling làm mới danh sách bình luận (client cần full_name/avatar_url
+  // giống hệt shape trả về từ getComments).
+  const [comment] = await prisma.$queryRaw<any[]>`
+    SELECT cm.*, u.full_name, u.avatar_url
+    FROM task_comments cm
+    JOIN users u ON u.id = cm.user_id
+    WHERE cm.id = ${inserted.id}
   `
 
   // ── Thông báo cho những người liên quan khác trong task (trừ người vừa nhắn) ─
