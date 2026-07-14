@@ -17,7 +17,7 @@ async function main() {
   console.log('⏳ Fetching provinces from DVCQG API...')
   const resp = await fetch('https://provinces.open-api.vn/api/?depth=2')
   if (!resp.ok) throw new Error(`API error: ${resp.status}`)
-  const provinces = (await resp.json()) as any[]
+  const provinces: any[] = await resp.json()
   console.log(`✅ Got ${provinces.length} provinces from API`)
 
   let pCount = 0, dCount = 0

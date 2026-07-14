@@ -16,22 +16,9 @@ import {
   getPlanStats,
   getMyTasks,
 } from '../controllers/tasks'
-import {
-  getTeams, createTeam, updateTeam, deleteTeam,
-  getTeamMembers, addTeamMembers, removeTeamMember,
-} from '../controllers/teams'
 
 const router = Router()
 router.use(authMiddleware)
-
-// ── Teams (Nhóm — chứa nhiều Kế hoạch) ────────────────────────
-router.get('/teams',        getTeams)
-router.post('/teams',       anyRole, createTeam)
-router.put('/teams/:id',    anyRole, updateTeam)
-router.delete('/teams/:id', anyRole, deleteTeam)
-router.get('/teams/:teamId/members',           getTeamMembers)
-router.post('/teams/:teamId/members',          anyRole, addTeamMembers)
-router.delete('/teams/:teamId/members/:userId', anyRole, removeTeamMember)
 
 // ── Plans ──────────────────────────────────────────────────
 router.get('/plans',        getPlans)
