@@ -267,11 +267,15 @@ async function notifyAppTaskDeleted(params: {
 export const getPlans = asyncHandler(async (req: Request, res: Response) => {
   const userId  = req.user!.id
   const isAdmin = req.user!.role === 'admin'
+  const { team_id } = req.query
+  const teamIdF = team_id ? parseInt(team_id as string) : null
 
   const plans = await prisma.$queryRaw<any[]>`
     SELECT
       p.*,
       u.full_name                                                   AS creator_name,
+      tm.name                                                       AS team_name,
+      tm.color                                                      AS team_color,
       COUNT(DISTINCT t.id)::int                                     AS task_count,
       COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END)::int AS completed_count,
       COUNT(DISTINCT CASE WHEN t.status = 'in_progress' THEN t.id END)::int AS in_progress_count,
@@ -285,34 +289,51 @@ export const getPlans = asyncHandler(async (req: Request, res: Response) => {
       )                                                              AS members
     FROM plans p
     LEFT JOIN users u ON u.id = p.created_by
+    LEFT JOIN teams tm ON tm.id = p.team_id
     LEFT JOIN tasks t ON t.plan_id = p.id
     LEFT JOIN plan_members pm ON pm.plan_id = p.id
     LEFT JOIN users mu ON mu.id = pm.user_id
     WHERE p.is_active = true
+      AND (${teamIdF}::int IS NULL OR p.team_id = ${teamIdF}::int)
       AND (
         ${isAdmin} = true
         OR EXISTS (SELECT 1 FROM plan_members me WHERE me.plan_id = p.id AND me.user_id = ${userId})
       )
-    GROUP BY p.id, u.full_name
+    GROUP BY p.id, u.full_name, tm.name, tm.color
     ORDER BY p.created_at DESC
   `
   res.json(successResponse(plans))
 })
 
 export const createPlan = asyncHandler(async (req: Request, res: Response) => {
-  const { name, description, plan_type, member_ids } = req.body
+  const { name, description, plan_type, team_id, member_ids } = req.body
   const createdBy = req.user!.id
   if (!name?.trim()) throw new AppError(400, 'Tên kế hoạch không được để trống')
 
   const planType: 'team' | 'personal' = plan_type === 'personal' ? 'personal' : 'team'
+
+  let teamId: number | null = null
+  if (planType === 'team') {
+    teamId = parseInt(team_id)
+    if (!teamId) throw new AppError(400, 'Vui lòng chọn Nhóm để tạo kế hoạch bên trong')
+    const teamRows = await prisma.$queryRaw<any[]>`SELECT id FROM teams WHERE id=${teamId} AND is_active=true`
+    if (!teamRows.length) throw new AppError(404, 'Nhóm không tồn tại')
+    const isMember = await prisma.$queryRaw<any[]>`
+      SELECT 1 FROM team_members WHERE team_id=${teamId} AND user_id=${createdBy}
+    `
+    if (!isMember.length && req.user!.role !== 'admin') {
+      throw new AppError(403, 'Bạn không phải thành viên của nhóm này')
+    }
+  }
+
   // Kế hoạch cá nhân không có thành viên khác ngoài chủ sở hữu
   const memberIds: number[] = planType === 'team' && Array.isArray(member_ids)
     ? [...new Set(member_ids.map((x: any) => parseInt(x)).filter((x: number) => !!x && x !== createdBy))]
     : []
 
   const [plan] = await prisma.$queryRaw<any[]>`
-    INSERT INTO plans (name, description, created_by, plan_type, created_at, updated_at)
-    VALUES (${name.trim()}, ${description || null}, ${createdBy}, ${planType}, NOW(), NOW())
+    INSERT INTO plans (name, description, created_by, plan_type, team_id, created_at, updated_at)
+    VALUES (${name.trim()}, ${description || null}, ${createdBy}, ${planType}, ${teamId}, NOW(), NOW())
     RETURNING *
   `
 
@@ -329,7 +350,16 @@ export const createPlan = asyncHandler(async (req: Request, res: Response) => {
     INSERT INTO plan_members (plan_id, user_id, role) VALUES (${plan.id}, ${createdBy}, 'owner')
     ON CONFLICT DO NOTHING
   `
-  // Thêm các thành viên ban đầu (nếu là kế hoạch nhóm)
+  // Kế hoạch nhóm: toàn bộ thành viên của Nhóm mặc định được thêm vào kế hoạch
+  if (planType === 'team' && teamId) {
+    await prisma.$executeRaw`
+      INSERT INTO plan_members (plan_id, user_id, role)
+      SELECT ${plan.id}, tm.user_id, 'member' FROM team_members tm
+      WHERE tm.team_id = ${teamId} AND tm.user_id != ${createdBy}
+      ON CONFLICT DO NOTHING
+    `
+  }
+  // Thêm các thành viên chỉ định thêm (nếu có, ngoài thành viên nhóm)
   if (memberIds.length) {
     await prisma.$executeRaw`
       INSERT INTO plan_members (plan_id, user_id, role)
