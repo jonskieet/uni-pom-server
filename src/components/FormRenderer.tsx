@@ -1,8 +1,10 @@
 // src/components/FormRenderer.tsx — 12-column grid, FieldWidth, styled sections
 import { useState, useRef } from 'react'
-import type { FormTemplate, FormField, FormData } from '../types/form'
-import { WIDTH_SPAN } from '../types/form'
+import type { FormTemplate, FormField, FormData, GroupTableGroup } from '../types/form'
+import { WIDTH_SPAN, BASE_FIELDS, newGroup } from '../types/form'
 import { colors } from '../styles/theme'
+import { RichTextEditor } from './RichTextEditor'
+import { uploadFileToSupabase } from '../utils/uploadFile'
 
 const inp: React.CSSProperties = {
   width:'100%', padding:'7px 10px', fontSize:13,
@@ -11,6 +13,155 @@ const inp: React.CSSProperties = {
   boxSizing:'border-box', outline:'none', fontFamily:'inherit',
 }
 const inpSm: React.CSSProperties = { ...inp, padding:'5px 8px', fontSize:12 }
+
+// ── Bảng theo nhóm (field type='group_table') ────────────────
+// Mỗi nhóm = 1 tên dùng chung (vd. "Switch/Hub") + N hàng con.
+// STT hiển thị LIÊN TỤC xuyên suốt mọi nhóm (khớp cách đánh số ở
+// file mẫu) — không reset về 1 khi sang nhóm mới.
+function GroupTableField({ field, value, onChange, readOnly }: {
+  field: FormField; value: any; onChange: (v: GroupTableGroup[]) => void; readOnly?: boolean
+}) {
+  const initGroups = (): GroupTableGroup[] =>
+    Array.isArray(value) && value.length > 0 ? value : [newGroup()]
+  const [groups, setGroups] = useState<GroupTableGroup[]>(initGroups)
+  const cols = field.columns ?? []
+
+  const commit = (next: GroupTableGroup[]) => { setGroups(next); onChange(next) }
+
+  const updateGroupName = (gi: number, name: string) => {
+    const next = [...groups]; next[gi] = { ...next[gi], name }; commit(next)
+  }
+  const addGroup = () => commit([...groups, newGroup()])
+  const removeGroup = (gi: number) => {
+    if (groups.length <= 1) return
+    commit(groups.filter((_, i) => i !== gi))
+  }
+  const addRow = (gi: number) => {
+    const next = [...groups]
+    next[gi] = { ...next[gi], rows: [...next[gi].rows, {}] }
+    commit(next)
+  }
+  const removeRow = (gi: number, ri: number) => {
+    const next = [...groups]
+    if (next[gi].rows.length <= 1) return
+    next[gi] = { ...next[gi], rows: next[gi].rows.filter((_, i) => i !== ri) }
+    commit(next)
+  }
+  const updateCell = (gi: number, ri: number, key: string, v: any) => {
+    const next = [...groups]
+    const rows = [...next[gi].rows]
+    rows[ri] = { ...rows[ri], [key]: v }
+    next[gi] = { ...next[gi], rows }
+    commit(next)
+  }
+
+  let stt = 0
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:12, marginTop:4 }}>
+      {groups.map((g, gi) => (
+        <div key={g.id} style={{
+          border:`0.5px solid ${colors.border}`, borderRadius:10, overflow:'hidden',
+        }}>
+          <div style={{
+            display:'flex', alignItems:'center', gap:8, padding:'8px 10px',
+            background:colors.bgSecondary, borderBottom:`0.5px solid ${colors.border}`,
+          }}>
+            <i className="ti ti-folder" style={{fontSize:13,color:colors.textTertiary}}/>
+            <input
+              style={{...inpSm,flex:1,fontWeight:600,background:colors.bgPrimary}}
+              placeholder={`Tên nhóm ${gi+1} (vd. Switch/Hub)`}
+              value={g.name} readOnly={readOnly}
+              onChange={e=>updateGroupName(gi, e.target.value)}
+            />
+            {!readOnly && (
+              <button onClick={()=>removeGroup(gi)} disabled={groups.length<=1}
+                title="Xoá nhóm"
+                style={{background:'none',border:'none',cursor:groups.length<=1?'not-allowed':'pointer',
+                  color:groups.length<=1?colors.textTertiary:colors.danger,fontSize:15,opacity:groups.length<=1?0.4:1}}>
+                <i className="ti ti-trash"/>
+              </button>
+            )}
+          </div>
+
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+              <thead>
+                <tr>
+                  <th style={{padding:'6px 8px',textAlign:'center',width:36,fontSize:11,
+                    fontWeight:600,color:colors.textTertiary,background:'#fff',
+                    borderBottom:`0.5px solid ${colors.borderLight}`}}>STT</th>
+                  {cols.map(c=>(
+                    <th key={c.key} style={{padding:'6px 8px',textAlign:'left',fontSize:11,
+                      fontWeight:600,color:colors.textTertiary,background:'#fff',
+                      borderBottom:`0.5px solid ${colors.borderLight}`}}>{c.label}</th>
+                  ))}
+                  {!readOnly && <th style={{width:32,background:'#fff',borderBottom:`0.5px solid ${colors.borderLight}`}}/>}
+                </tr>
+              </thead>
+              <tbody>
+                {g.rows.map((row, ri) => {
+                  stt += 1
+                  const curStt = stt
+                  return (
+                    <tr key={ri} style={{borderBottom:`0.5px solid ${colors.borderLight}`}}>
+                      <td style={{padding:'4px 8px',textAlign:'center',fontSize:12,
+                        fontWeight:600,color:colors.textTertiary}}>{curStt}</td>
+                      {cols.map(c=>(
+                        <td key={c.key} style={{padding:'3px 6px'}}>
+                          {c.type==='select' ? (
+                            <select style={inpSm} value={row[c.key]??''} disabled={readOnly}
+                              onChange={e=>updateCell(gi,ri,c.key,e.target.value)}>
+                              <option value="">—</option>
+                              {(c.options??[]).map(o=><option key={o} value={o}>{o}</option>)}
+                            </select>
+                          ) : (
+                            <input style={inpSm} type={c.type==='number'?'number':'text'}
+                              value={row[c.key]??''} readOnly={readOnly}
+                              placeholder={readOnly?'':c.label}
+                              onChange={e=>updateCell(gi,ri,c.key,e.target.value)} />
+                          )}
+                        </td>
+                      ))}
+                      {!readOnly && (
+                        <td style={{padding:'3px 6px',textAlign:'center'}}>
+                          <button onClick={()=>removeRow(gi,ri)} disabled={g.rows.length<=1}
+                            style={{background:'none',border:'none',
+                              cursor:g.rows.length<=1?'not-allowed':'pointer',
+                              color:colors.danger,fontSize:15,opacity:g.rows.length<=1?0.4:1}}>×</button>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {!readOnly && (
+            <button onClick={()=>addRow(gi)} style={{
+              width:'100%',fontSize:11,color:colors.primary,background:colors.bgPrimary,
+              border:'none',borderTop:`0.5px dashed ${colors.border}`,padding:'6px',cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',gap:4,
+            }}>
+              <i className="ti ti-plus" style={{fontSize:12}}/>Thêm dòng vào "{g.name || `Nhóm ${gi+1}`}"
+            </button>
+          )}
+        </div>
+      ))}
+
+      {!readOnly && (
+        <button onClick={addGroup} style={{
+          fontSize:12,color:colors.primary,background:colors.primaryLight,
+          border:`0.5px dashed ${colors.primary}`,borderRadius:8,padding:'8px 16px',
+          cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+        }}>
+          <i className="ti ti-folder-plus" style={{fontSize:13}}/>Thêm nhóm
+        </button>
+      )}
+    </div>
+  )
+}
 
 function FieldRenderer({ field, value, onChange, readOnly }: {
   field:FormField; value:any; onChange:(v:any)=>void; readOnly?:boolean
@@ -22,6 +173,7 @@ function FieldRenderer({ field, value, onChange, readOnly }: {
     return [{}]
   }
   const [tableRows, setTableRows] = useState<Record<string,any>[]>(initRows)
+  const [uploadingImg, setUploadingImg] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const updateTable = (rows: Record<string,any>[]) => { setTableRows(rows); onChange(rows) }
 
@@ -187,84 +339,99 @@ function FieldRenderer({ field, value, onChange, readOnly }: {
           </div>
         )
       }
+
+      // ── Image field ─────────────────────────────────────────
+      // FIX: upload thật lên Supabase qua IPC thay vì dùng blob URL tạm thời.
+      // Blob URL (URL.createObjectURL) chỉ sống trong session hiện tại —
+      // khi lưu vào DB rồi mở lại thì ảnh sẽ bị mất.
+      // Giờ mỗi ảnh được upload → nhận public URL từ Supabase → lưu vào form_data.
       case 'image': {
         const files: string[] = Array.isArray(value) ? value : []
-        const [uploading, setUploading] = useState(false)
 
-        // Đọc file → base64 → upload Supabase → lưu URL thật (không dùng blob URL)
         const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
           const selected = Array.from(e.target.files ?? [])
           if (!selected.length) return
-          setUploading(true)
+
+          // Reset input để có thể chọn lại cùng file nếu cần
+          if (fileRef.current) fileRef.current.value = ''
+
+          setUploadingImg(true)
           try {
-            const uploaded: string[] = []
-            for (const file of selected) {
-              const base64 = await new Promise<string>((res, rej) => {
-                const reader = new FileReader()
-                reader.onload  = () => res((reader.result as string).split(',')[1])
-                reader.onerror = () => rej(new Error('Đọc file thất bại'))
-                reader.readAsDataURL(file)
-              })
-              const result = await (window as any).api.upload.imageBase64(
-                'surveys', base64, file.type
-              )
-              if (result?.error) throw new Error(result.error)
-              uploaded.push(result.url)
-            }
-            onChange(field.multiple ? [...files, ...uploaded] : uploaded.slice(0, 1))
+            const uploadedUrls = await Promise.all(
+              selected.map(file => uploadFileToSupabase(file))
+            )
+            onChange(field.multiple ? [...files, ...uploadedUrls] : [uploadedUrls[0]])
           } catch (err: any) {
-            alert('Upload ảnh thất bại: ' + err.message)
+            alert('Upload ảnh thất bại: ' + (err.message ?? 'Lỗi không xác định'))
           } finally {
-            setUploading(false)
-            // Reset input để có thể chọn cùng file lần sau
-            if (fileRef.current) fileRef.current.value = ''
+            setUploadingImg(false)
           }
         }
 
         return (
           <div>
-            <input ref={fileRef} type="file" accept={field.accept ?? 'image/*'}
-              multiple={field.multiple} style={{ display: 'none' }}
-              onChange={handleFileChange} />
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <input
+              ref={fileRef}
+              type="file"
+              accept={field.accept ?? 'image/*'}
+              multiple={field.multiple}
+              style={{ display: 'none' }}
+              onChange={handleFileChange}
+            />
+            <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+              {/* Ảnh đã upload — src là Supabase public URL, luôn hiển thị được */}
               {files.map((src, i) => (
-                <div key={i} style={{ position: 'relative' }}>
-                  <img src={src} alt="" style={{
-                    width: 80, height: 80, objectFit: 'cover',
-                    borderRadius: 8, border: `0.5px solid ${colors.border}`,
-                    display: 'block',
-                  }} />
+                <div key={i} style={{ position:'relative' }}>
+                  <img
+                    src={src}
+                    alt=""
+                    style={{
+                      width:80, height:80, objectFit:'cover',
+                      borderRadius:8, border:`0.5px solid ${colors.border}`,
+                    }}
+                  />
                   {!readOnly && (
-                    <button onClick={() => onChange(files.filter((_, j) => j !== i))}
+                    <button
+                      onClick={() => onChange(files.filter((_, j) => j !== i))}
                       style={{
-                        position: 'absolute', top: -6, right: -6,
-                        background: colors.danger, color: '#fff',
-                        border: 'none', borderRadius: '50%', width: 18, height: 18,
-                        cursor: 'pointer', fontSize: 11,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}>×</button>
+                        position:'absolute', top:-6, right:-6,
+                        background:colors.danger, color:'#fff',
+                        border:'none', borderRadius:'50%',
+                        width:18, height:18, cursor:'pointer', fontSize:11,
+                        display:'flex', alignItems:'center', justifyContent:'center',
+                      }}
+                    >×</button>
                   )}
                 </div>
               ))}
+
+              {/* Nút thêm ảnh / spinner khi đang upload */}
               {!readOnly && (
                 <button
-                  onClick={() => !uploading && fileRef.current?.click()}
-                  disabled={uploading}
+                  onClick={() => !uploadingImg && fileRef.current?.click()}
+                  disabled={uploadingImg}
+                  title={uploadingImg ? 'Đang tải ảnh lên...' : 'Thêm ảnh'}
                   style={{
-                    width: 80, height: 80, borderRadius: 8,
-                    cursor: uploading ? 'wait' : 'pointer',
-                    border: `1.5px dashed ${uploading ? colors.primary : colors.border}`,
-                    background: colors.bgSecondary,
-                    color: uploading ? colors.primary : colors.textTertiary,
-                    fontSize: uploading ? 12 : 22,
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', gap: 4,
-                  }}>
-                  {uploading
-                    ? <><i className="ti ti-loader-2" style={{ fontSize: 22, animation: 'spin 1s linear infinite' }} />
-                        <span style={{ fontSize: 10 }}>Đang tải...</span></>
-                    : <i className="ti ti-plus" />
+                    width:80, height:80, borderRadius:8,
+                    cursor: uploadingImg ? 'not-allowed' : 'pointer',
+                    border:`1.5px dashed ${uploadingImg ? colors.primary : colors.border}`,
+                    background:colors.bgSecondary,
+                    color: uploadingImg ? colors.primary : colors.textTertiary,
+                    fontSize:22,
+                    display:'flex', flexDirection:'column',
+                    alignItems:'center', justifyContent:'center', gap:4,
+                  }}
+                >
+                  {uploadingImg
+                    ? <i className="ti ti-loader-2" style={{
+                        fontSize:22,
+                        animation:'spin 1s linear infinite',
+                      }}/>
+                    : <i className="ti ti-plus"/>
                   }
+                  {uploadingImg && (
+                    <span style={{fontSize:9, color:colors.primary}}>Đang tải...</span>
+                  )}
                 </button>
               )}
             </div>
@@ -272,6 +439,20 @@ function FieldRenderer({ field, value, onChange, readOnly }: {
           </div>
         )
       }
+
+      case 'richtext':
+        return (
+          <RichTextEditor
+            content={value}
+            onChange={readOnly ? undefined : (doc) => onChange(doc)}
+            readOnly={readOnly}
+            placeholder={field.placeholder}
+          />
+        )
+
+      case 'group_table':
+        return <GroupTableField field={field} value={value} onChange={onChange} readOnly={readOnly} />
+
       default: return null
     }
   })()
@@ -288,13 +469,68 @@ export function FormRenderer({ template, data={}, onChange, readOnly }: {
 }) {
   const handleChange = (key:string, val:any) => onChange?.({...data,[key]:val})
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:16 }}>
-      {template.fields.map(field=>(
-        <FieldRenderer key={field.id} field={field}
-          value={data[field.key]}
-          onChange={val=>handleChange(field.key,val)}
-          readOnly={readOnly}/>
-      ))}
+    <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+
+      {/* ── THÔNG TIN CƠ BẢN — luôn hiển thị, không thể xóa ── */}
+      <div>
+        <div style={{
+          display:'flex', alignItems:'center', gap:8, padding:'8px 14px',
+          background:'linear-gradient(90deg,#3b3290 0%,#5b52c8 100%)',
+          borderRadius:'8px 8px 0 0',
+        }}>
+          <i className="ti ti-lock" style={{color:'#fff',fontSize:13}}/>
+          <span style={{fontSize:11,fontWeight:700,textTransform:'uppercase',
+            letterSpacing:'0.07em',color:'#fff'}}>
+            THÔNG TIN CƠ BẢN
+          </span>
+          <span style={{marginLeft:'auto',fontSize:10,
+            color:'rgba(255,255,255,0.65)',fontStyle:'italic'}}>
+            Bắt buộc · Có trong mọi phiếu khảo sát
+          </span>
+        </div>
+        <div style={{
+          display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:14,
+          padding:'16px', background:'#f8f7ff',
+          border:'1px solid #c7d2fe', borderRadius:'0 0 8px 8px',
+        }}>
+          {BASE_FIELDS.map(field=>(
+            <FieldRenderer key={field.id} field={field}
+              value={data[field.key]}
+              onChange={val=>handleChange(field.key,val)}
+              readOnly={readOnly}/>
+          ))}
+        </div>
+      </div>
+
+      {/* ── THÔNG TIN CHUYÊN BIỆT — do trưởng phòng KT thiết kế ── */}
+      {template.fields.length > 0 && (
+        <div>
+          <div style={{
+            display:'flex', alignItems:'center', gap:8, padding:'8px 14px',
+            background:'linear-gradient(90deg,#0f766e 0%,#14b8a6 100%)',
+            borderRadius:'8px 8px 0 0',
+          }}>
+            <i className="ti ti-layout-grid" style={{color:'#fff',fontSize:13}}/>
+            <span style={{fontSize:11,fontWeight:700,textTransform:'uppercase',
+              letterSpacing:'0.07em',color:'#fff'}}>
+              THÔNG TIN CHUYÊN BIỆT
+            </span>
+          </div>
+          <div style={{
+            display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:16,
+            padding:'16px', border:'1px solid #99f6e4',
+            borderRadius:'0 0 8px 8px', background:'#f0fdfa',
+          }}>
+            {template.fields.map(field=>(
+              <FieldRenderer key={field.id} field={field}
+                value={data[field.key]}
+                onChange={val=>handleChange(field.key,val)}
+                readOnly={readOnly}/>
+            ))}
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

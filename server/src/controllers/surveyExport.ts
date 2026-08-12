@@ -26,9 +26,16 @@ const prisma = globalForPrisma._prisma
 // ─── Types (mirror src/types/form.ts) ────────────────────────
 
 type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'checkbox'
-  | 'radio' | 'date' | 'table' | 'image' | 'section' | 'richtext'
+  | 'radio' | 'date' | 'table' | 'image' | 'section' | 'richtext' | 'group_table'
 
 interface TableColumn { key: string; label: string; type: string; options?: string[] }
+
+// mirror src/types/form.ts — GroupTableGroup
+interface GroupTableGroup {
+  id:   string
+  name: string
+  rows: Record<string, any>[]
+}
 
 interface FormField {
   id: string
@@ -340,8 +347,87 @@ function renderTableField(field: FormField, value: any): Table {
 }
 
 /**
- * Render checkbox / multi-select value (stored as string[] or comma-separated)
+ * Render field type='group_table' thành Table Word — ô "Nhóm" GỘP
+ * (rowSpan) theo chiều dọc trên toàn bộ hàng con của từng nhóm, STT
+ * đánh số LIÊN TỤC xuyên suốt các nhóm (không reset về 1).
+ *
+ * Kỹ thuật: thư viện `docx` hỗ trợ rowSpan kiểu "khai báo 1 lần" —
+ * chỉ cần set `rowSpan: N` ở TableCell của HÀNG ĐẦU nhóm, các hàng
+ * sau trong cùng nhóm KHÔNG được thêm cell cho cột đó nữa (bỏ hẳn),
+ * thư viện tự tính toán merge khi ghi ra OOXML — không cần cell
+ * "continue" như viết OOXML tay.
  */
+function renderGroupTableField(field: FormField, value: any): Table {
+  const columns: TableColumn[] = field.columns ?? []
+  const groups: any[] = Array.isArray(value) ? value : []
+
+  const totalRows = groups.reduce((sum, g) => sum + (Array.isArray(g.rows) ? g.rows.length : 0), 0)
+  if (columns.length === 0 || totalRows === 0) {
+    return new Table({
+      width: { size: CONTENT_W, type: WidthType.DXA },
+      columnWidths: [CONTENT_W],
+      rows: [new TableRow({ children: [new TableCell({
+        width: { size: CONTENT_W, type: WidthType.DXA },
+        borders: bordersThin(),
+        margins: { top: 80, bottom: 80, left: 160, right: 160 },
+        children: [para([run('(Không có dữ liệu)', { italics: true, color: '9E9E9E' })])],
+      })] })],
+    })
+  }
+
+  // Độ rộng cột: Nhóm | STT | các cột thường
+  const groupW = 1800
+  const sttW = 600
+  const normalW = Math.floor((CONTENT_W - groupW - sttW) / columns.length)
+  const colWidths = columns.map(() => normalW)
+  const diff = CONTENT_W - groupW - sttW - colWidths.reduce((a, b) => a + b, 0)
+  if (colWidths.length > 0) colWidths[colWidths.length - 1] += diff
+
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: [
+      thCell('Nhóm', groupW),
+      thCell('STT', sttW),
+      ...columns.map((c, i) => thCell(c.label, colWidths[i])),
+    ],
+  })
+
+  const dataRows: TableRow[] = []
+  let stt = 0
+  for (const group of groups) {
+    const rows: Record<string, any>[] = Array.isArray(group.rows) ? group.rows : []
+    rows.forEach((row, ri) => {
+      stt += 1
+      const cells: TableCell[] = []
+      if (ri === 0) {
+        // Hàng đầu nhóm — cell "Nhóm" gộp xuống rows.length hàng
+        cells.push(new TableCell({
+          width: { size: groupW, type: WidthType.DXA },
+          borders: bordersThin(),
+          margins: { top: 60, bottom: 60, left: 120, right: 120 },
+          verticalAlign: VerticalAlign.CENTER,
+          rowSpan: rows.length,
+          children: [new Paragraph({ children: [run(group.name || '(Chưa đặt tên nhóm)', { bold: true, size: 18 })] })],
+        }))
+      }
+      cells.push(tdCell(String(stt), sttW, true))
+      columns.forEach((col, ci) => {
+        const isCenter = col.type === 'number' || col.type === 'select'
+        const val = row[col.key] !== undefined ? String(row[col.key]) : ''
+        cells.push(tdCell(val, colWidths[ci], isCenter))
+      })
+      dataRows.push(new TableRow({ children: cells }))
+    })
+  }
+
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: [groupW, sttW, ...colWidths],
+    rows: [headerRow, ...dataRows],
+  })
+}
+
+
 function renderCheckboxValue(value: any): Paragraph[] {
   const vals: string[] = Array.isArray(value)
     ? value
@@ -439,8 +525,10 @@ function rteListParagraphs(listNode: any, level: number): Paragraph[] {
   return out
 }
 
-/** Entry point: TipTap doc JSON → mảng Paragraph để chèn vào docx */
-function renderRichTextField(doc: any): Paragraph[] {
+/** Entry point: TipTap doc JSON → mảng Paragraph để chèn vào docx.
+ *  Async vì node ảnh (dán từ Word) cần fetchImageRun (async) để tải ảnh
+ *  từ Supabase Storage về buffer trước khi nhúng vào docx. */
+async function renderRichTextField(doc: any): Promise<Paragraph[]> {
   const content: any[] = Array.isArray(doc?.content) ? doc.content : []
   const out: Paragraph[] = []
   for (const node of content) {
@@ -461,6 +549,21 @@ function renderRichTextField(doc: any): Paragraph[] {
       // Bỏ qua paragraph rỗng liên tiếp để tránh nhiều dòng trắng thừa khi export
       const hasText = (node.content ?? []).some((n: any) => n.type === 'text' && n.text)
       if (hasText) out.push(rteBlockParagraph(node))
+    } else if (node.type === 'image') {
+      // Node ảnh của extension @tiptap/extension-image — cấp block, ngang
+      // hàng với paragraph/heading trong doc.content (không lồng trong
+      // paragraph). src là public URL Supabase Storage (đã upload lúc paste).
+      const src = node.attrs?.src
+      if (src) {
+        const imgRun = await fetchImageRun(src)
+        if (imgRun) {
+          out.push(new Paragraph({
+            spacing: { before: 80, after: 80 },
+            alignment: AlignmentType.CENTER,
+            children: [imgRun],
+          }))
+        }
+      }
     }
     // blockquote/codeBlock/horizontalRule: chưa hỗ trợ toolbar phía FE nên
     // hiếm khi xuất hiện — nếu có, bỏ qua thay vì crash export.
@@ -499,6 +602,12 @@ async function renderFields(
         elements.push(new Paragraph({ spacing: { before: 0, after: 120 }, children: [] }))
         break
 
+      case 'group_table':
+        elements.push(fieldLabel(field.label, field.required))
+        elements.push(renderGroupTableField(field, value))
+        elements.push(new Paragraph({ spacing: { before: 0, after: 120 }, children: [] }))
+        break
+
       case 'textarea':
         elements.push(fieldLabel(field.label, field.required))
         elements.push(
@@ -519,7 +628,7 @@ async function renderFields(
 
       case 'richtext':
         elements.push(fieldLabel(field.label, field.required))
-        elements.push(...renderRichTextField(value))
+        elements.push(...(await renderRichTextField(value)))
         elements.push(new Paragraph({ spacing: { before: 0, after: 60 }, children: [] }))
         break
 
