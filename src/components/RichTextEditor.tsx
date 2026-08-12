@@ -10,15 +10,16 @@
 // element, không cần parse HTML tuỳ tiện (dễ vỡ, khó kiểm soát).
 //
 // Hỗ trợ: heading (H2/H3/H4), in đậm/nghiêng/gạch chân, danh sách
-// gạch đầu dòng & đánh số NHIỀU CẤP (thụt vào/ra qua toolbar), ảnh
-// dán trực tiếp từ Word (paste), và NHẬP NGUYÊN FILE .docx (nút
-// "Nhập từ Word" trên toolbar) — dùng mammoth.js đọc thẳng cấu trúc
-// XML gốc của file .docx (numbering.xml/styles) thay vì dựa vào HTML
-// clipboard khi paste, nên bullet/số list ra đúng ngay cả khi Word
-// hiển thị bằng font ký hiệu (Wingdings/Symbol) mà trình duyệt không
-// có font đó để hiển thị (nguyên nhân gây ô vuông ▯ khi paste thường).
-// Ảnh nhúng trong .docx cũng được tự động upload lên Supabase Storage.
-// Bảng trong rich text vẫn dùng field type='table' riêng.
+// gạch đầu dòng & đánh số NHIỀU CẤP (thụt vào/ra qua toolbar), căn lề
+// trái/giữa/phải, BẢNG (chèn tay hoặc nhập từ Word), ảnh dán trực tiếp
+// từ Word (paste), và NHẬP NGUYÊN FILE .docx (nút "Nhập từ Word" trên
+// toolbar) — dùng mammoth.js đọc thẳng cấu trúc XML gốc của file .docx
+// (numbering.xml/styles/bảng) thay vì dựa vào HTML clipboard khi paste,
+// nên bullet/số list và bảng ra đúng cấu trúc ngay cả khi Word hiển thị
+// bullet bằng font ký hiệu (Wingdings/Symbol) mà trình duyệt không có
+// font đó (nguyên nhân gây ô vuông ▯ khi paste thường). Ảnh nhúng trong
+// .docx cũng được tự động upload lên Supabase Storage, và chú thích ảnh
+// (đoạn ngay sau ảnh) được tự canh giữa.
 // ============================================================
 import { useRef, useState } from 'react'
 import { useEditor, EditorContent, type JSONContent } from '@tiptap/react'
@@ -26,6 +27,11 @@ import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Placeholder from '@tiptap/extension-placeholder'
 import Image from '@tiptap/extension-image'
+import Table from '@tiptap/extension-table'
+import TableRow from '@tiptap/extension-table-row'
+import TableHeader from '@tiptap/extension-table-header'
+import TableCell from '@tiptap/extension-table-cell'
+import TextAlign from '@tiptap/extension-text-align'
 import mammoth from 'mammoth'
 import { colors, radius } from '../styles/theme'
 import { EMPTY_RICH_TEXT } from '../types/form'
@@ -87,6 +93,26 @@ function base64ToFile(base64: string, contentType: string, name: string): File {
   return new File([bytes], name, { type: contentType || 'image/png' })
 }
 
+// mammoth luôn đặt ảnh trong <p><img></p> riêng, và đoạn chú thích Word
+// ("Ảnh 1: ...") thường nằm ngay ở <p> kế tiếp — nhưng mammoth KHÔNG mang
+// theo canh giữa (mammoth chỉ convert style/format được map tường minh,
+// bỏ qua alignment trực tiếp). Ở đây dò các <p> đứng ngay sau <p><img></p>
+// và gắn thêm style="text-align:center" để extension TextAlign của TipTap
+// đọc được lúc parse (đồng thời ảnh cũng được canh giữa qua CSS bên dưới).
+function autoCenterImageCaptions(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const paragraphs = Array.from(doc.body.children)
+  paragraphs.forEach((el, i) => {
+    const isImageOnlyPara = el.tagName === 'P' && el.children.length === 1 && el.children[0].tagName === 'IMG'
+    if (!isImageOnlyPara) return
+    const next = paragraphs[i + 1]
+    if (next && next.tagName === 'P' && next.textContent?.trim()) {
+      next.setAttribute('style', `${next.getAttribute('style') ?? ''};text-align:center`.replace(/^;/, ''))
+    }
+  })
+  return doc.body.innerHTML
+}
+
 export function RichTextEditor({ content, onChange, readOnly, placeholder }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
@@ -99,6 +125,11 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
       }),
       Underline,
       Image.configure({ inline: false, allowBase64: false }),
+      TextAlign.configure({ types: ['paragraph', 'heading'] }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       Placeholder.configure({
         placeholder: placeholder ?? 'Nhập nội dung...',
         emptyEditorClass: 'rte-empty',
@@ -175,7 +206,7 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
           }),
         }
       )
-      editor.chain().focus().insertContent(result.value).run()
+      editor.chain().focus().insertContent(autoCenterImageCaptions(result.value)).run()
       if (result.messages?.length) {
         console.warn('[RichTextEditor] mammoth cảnh báo khi đọc .docx:', result.messages)
       }
@@ -239,6 +270,38 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
 
           <Divider />
 
+          <ToolbarButton icon="ti-align-left" title="Căn trái"
+            active={editor.isActive({ textAlign: 'left' })}
+            onClick={() => editor.chain().focus().setTextAlign('left').run()} />
+          <ToolbarButton icon="ti-align-center" title="Căn giữa"
+            active={editor.isActive({ textAlign: 'center' })}
+            onClick={() => editor.chain().focus().setTextAlign('center').run()} />
+          <ToolbarButton icon="ti-align-right" title="Căn phải"
+            active={editor.isActive({ textAlign: 'right' })}
+            onClick={() => editor.chain().focus().setTextAlign('right').run()} />
+
+          <Divider />
+
+          <ToolbarButton icon="ti-table-plus" title="Chèn bảng 3×3"
+            onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
+          <ToolbarButton icon="ti-row-insert-bottom" title="Thêm dòng"
+            disabled={!editor.can().addRowAfter()}
+            onClick={() => editor.chain().focus().addRowAfter().run()} />
+          <ToolbarButton icon="ti-row-remove" title="Xoá dòng"
+            disabled={!editor.can().deleteRow()}
+            onClick={() => editor.chain().focus().deleteRow().run()} />
+          <ToolbarButton icon="ti-column-insert-right" title="Thêm cột"
+            disabled={!editor.can().addColumnAfter()}
+            onClick={() => editor.chain().focus().addColumnAfter().run()} />
+          <ToolbarButton icon="ti-column-remove" title="Xoá cột"
+            disabled={!editor.can().deleteColumn()}
+            onClick={() => editor.chain().focus().deleteColumn().run()} />
+          <ToolbarButton icon="ti-trash" title="Xoá bảng"
+            disabled={!editor.can().deleteTable()}
+            onClick={() => editor.chain().focus().deleteTable().run()} />
+
+          <Divider />
+
           <ToolbarButton icon="ti-arrow-back-up" title="Hoàn tác (Ctrl+Z)"
             disabled={!editor.can().undo()}
             onClick={() => editor.chain().focus().undo().run()} />
@@ -284,9 +347,28 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
         .ProseMirror img {
           max-width: 100%;
           border-radius: 6px;
-          margin: 8px 0;
+          margin: 8px auto;
           display: block;
         }
+        .ProseMirror table {
+          border-collapse: collapse;
+          table-layout: fixed;
+          width: 100%;
+          margin: 10px 0;
+        }
+        .ProseMirror th, .ProseMirror td {
+          border: 0.5px solid ${colors.border};
+          padding: 6px 8px;
+          vertical-align: top;
+          position: relative;
+        }
+        .ProseMirror th {
+          background: ${colors.bgSecondary};
+          font-weight: 700;
+          text-align: center;
+        }
+        .ProseMirror td > p, .ProseMirror th > p { margin: 0; }
+        .ProseMirror .selectedCell { background: ${colors.primaryLight}; }
         .rte-empty::before {
           content: attr(data-placeholder); float: left; height: 0; pointer-events: none;
           color: ${colors.textTertiary};

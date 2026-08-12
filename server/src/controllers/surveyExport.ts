@@ -473,6 +473,14 @@ function rteInlineRuns(nodes: any[] = []): TextRun[] {
   return runs.length > 0 ? runs : [run('')]
 }
 
+/** Map giá trị textAlign của TipTap (extension TextAlign) → AlignmentType của docx */
+const RTE_ALIGN_MAP: Record<string, any> = {
+  left:    AlignmentType.LEFT,
+  center:  AlignmentType.CENTER,
+  right:   AlignmentType.RIGHT,
+  justify: AlignmentType.JUSTIFIED,
+}
+
 /**
  * Convert 1 node paragraph (bên trong listItem hoặc top-level) → Paragraph,
  * gắn numbering nếu nằm trong list. Heading được xử lý riêng ở
@@ -483,6 +491,9 @@ function rteBlockParagraph(node: any, listCtx?: { ref: string; level: number }):
   const opts: any = { spacing: { before: 0, after: 60 } }
   if (listCtx) {
     opts.numbering = { reference: listCtx.ref, level: Math.min(listCtx.level, RTE_MAX_LEVELS - 1) }
+  }
+  if (node.attrs?.textAlign) {
+    opts.alignment = RTE_ALIGN_MAP[node.attrs.textAlign] ?? AlignmentType.LEFT
   }
   return new Paragraph({ ...opts, children: rteInlineRuns(node.content) })
 }
@@ -525,12 +536,97 @@ function rteListParagraphs(listNode: any, level: number): Paragraph[] {
   return out
 }
 
-/** Entry point: TipTap doc JSON → mảng Paragraph để chèn vào docx.
+/**
+ * Nội dung 1 ô bảng (tableCell/tableHeader) có thể chứa nhiều paragraph con
+ * (Word cho phép xuống dòng trong 1 ô) — giữ nguyên từng dòng thành 1
+ * Paragraph riêng trong TableCell.children thay vì gộp lại, để giống bản
+ * gốc Word nhất. Header luôn in đậm + canh giữa bất kể mark gốc của user.
+ */
+function rteCellParagraphs(node: any, isHeader: boolean): Paragraph[] {
+  const paraNodes = (node.content ?? []).filter((c: any) => c.type === 'paragraph')
+  const list = paraNodes.length > 0 ? paraNodes : [{ content: [] }]
+  return list.map((p: any) => {
+    const inline = (p.content ?? []).filter((n: any) => n.type === 'text')
+    const runs = isHeader
+      ? (inline.length > 0 ? inline : [{ text: '' }]).map((n: any) => {
+          const marks: string[] = (n.marks ?? []).map((m: any) => m.type)
+          return run(n.text ?? '', {
+            bold: true,
+            italics: marks.includes('italic'),
+            underline: marks.includes('underline') ? {} : undefined,
+            size: 18,
+          })
+        })
+      : rteInlineRuns(p.content)
+    return new Paragraph({
+      spacing: { before: 0, after: 0 },
+      alignment: isHeader
+        ? AlignmentType.CENTER
+        : (p.attrs?.textAlign ? RTE_ALIGN_MAP[p.attrs.textAlign] ?? AlignmentType.LEFT : AlignmentType.LEFT),
+      children: runs,
+    })
+  })
+}
+
+/**
+ * TipTap table node (do người dùng chèn tay qua toolbar, hoặc do nhập file
+ * .docx qua mammoth — mammoth convert bảng Word thật, kể cả ô gộp ngang/dọc,
+ * thành <table> chuẩn với colspan/rowspan) → docx Table.
+ * Chia đều độ rộng cột theo CONTENT_W (docx không cần biết độ rộng gốc từ
+ * Word, chỉ cần tổng khớp trang A4).
+ */
+function renderRteTable(tableNode: any): Table {
+  const rows: any[] = (tableNode.content ?? []).filter((r: any) => r.type === 'tableRow')
+  if (rows.length === 0) {
+    return new Table({
+      width: { size: CONTENT_W, type: WidthType.DXA },
+      rows: [new TableRow({ children: [new TableCell({
+        width: { size: CONTENT_W, type: WidthType.DXA },
+        borders: bordersThin(),
+        children: [para([run('(Bảng trống)', { italics: true, color: '9E9E9E', size: 18 })])],
+      })] })],
+    })
+  }
+
+  const colCount = Math.max(
+    1,
+    ...rows.map((r: any) => (r.content ?? []).reduce((sum: number, c: any) => sum + (c.attrs?.colspan ?? 1), 0))
+  )
+  const colWidth = Math.floor(CONTENT_W / colCount)
+
+  const docxRows = rows.map((r: any) => {
+    const cells: any[] = r.content ?? []
+    const hasHeader = cells.some((c: any) => c.type === 'tableHeader')
+    const tableCells = cells.map((c: any) => {
+      const isHeader = c.type === 'tableHeader'
+      const colspan = c.attrs?.colspan ?? 1
+      const rowspan = c.attrs?.rowspan ?? 1
+      return new TableCell({
+        width: { size: colWidth * colspan, type: WidthType.DXA },
+        ...(colspan > 1 ? { columnSpan: colspan } : {}),
+        ...(rowspan > 1 ? { rowSpan: rowspan } : {}),
+        borders: bordersThin(),
+        margins: { top: 60, bottom: 60, left: 100, right: 100 },
+        verticalAlign: VerticalAlign.CENTER,
+        shading: isHeader ? { fill: 'E8EAF6', type: ShadingType.CLEAR } : undefined,
+        children: rteCellParagraphs(c, isHeader),
+      })
+    })
+    return new TableRow({ tableHeader: hasHeader, children: tableCells })
+  })
+
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    rows: docxRows,
+  })
+}
+
+/** Entry point: TipTap doc JSON → mảng Paragraph/Table để chèn vào docx.
  *  Async vì node ảnh (dán từ Word) cần fetchImageRun (async) để tải ảnh
  *  từ Supabase Storage về buffer trước khi nhúng vào docx. */
-async function renderRichTextField(doc: any): Promise<Paragraph[]> {
+async function renderRichTextField(doc: any): Promise<(Paragraph | Table)[]> {
   const content: any[] = Array.isArray(doc?.content) ? doc.content : []
-  const out: Paragraph[] = []
+  const out: (Paragraph | Table)[] = []
   for (const node of content) {
     if (node.type === 'bulletList' || node.type === 'orderedList') {
       out.push(...rteListParagraphs(node, 0))
@@ -543,6 +639,7 @@ async function renderRichTextField(doc: any): Promise<Paragraph[]> {
           : { size: 20, color: '37474F' }
       out.push(new Paragraph({
         spacing: { before: 160, after: 60 },
+        alignment: node.attrs?.textAlign ? RTE_ALIGN_MAP[node.attrs.textAlign] ?? undefined : undefined,
         children: rteHeadingRuns(node.content, style),
       }))
     } else if (node.type === 'paragraph') {
@@ -564,6 +661,11 @@ async function renderRichTextField(doc: any): Promise<Paragraph[]> {
           }))
         }
       }
+    } else if (node.type === 'table') {
+      // Node bảng của extension @tiptap/extension-table — cấp block, ngang
+      // hàng với paragraph/heading/image. Dùng chung được cho cả bảng chèn
+      // tay lẫn bảng nhập từ file .docx qua mammoth (kể cả ô gộp).
+      out.push(renderRteTable(node))
     }
     // blockquote/codeBlock/horizontalRule: chưa hỗ trợ toolbar phía FE nên
     // hiếm khi xuất hiện — nếu có, bỏ qua thay vì crash export.
