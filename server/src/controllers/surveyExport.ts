@@ -13,7 +13,7 @@ import { Request, Response } from 'express'
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   AlignmentType, BorderStyle, WidthType, ShadingType, VerticalAlign,
-  ImageRun,
+  ImageRun, LevelFormat,
 } from 'docx'
 import { PrismaClient } from '@prisma/client'
 import { asyncHandler } from '../middleware/errorHandler'
@@ -358,6 +358,116 @@ function renderCheckboxValue(value: any): Paragraph[] {
   )
 }
 
+// ─── RICH TEXT (field type='richtext') → docx ─────────────────
+// Nội dung field richtext lưu dạng TipTap/ProseMirror JSON doc (xem
+// RichTextEditor.tsx phía frontend) — KHÔNG phải HTML thô. Vì schema
+// JSON này do chính app kiểm soát (chỉ sinh ra từ editor, không phải
+// người dùng upload file tuỳ ý) nên convert 1-1 sang docx an toàn,
+// không cần parse HTML/OOXML rủi ro vỡ định dạng.
+//
+// Numbering reference dùng chung cho MỌI field richtext trong 1 file
+// export — xem khai báo `numbering.config` khi tạo `Document` bên dưới.
+const RTE_BULLET_REF  = 'rte-bullet'
+const RTE_ORDERED_REF = 'rte-ordered'
+const RTE_MAX_LEVELS  = 4
+
+/** Convert mảng inline node (text + marks) của TipTap → TextRun[] */
+function rteInlineRuns(nodes: any[] = []): TextRun[] {
+  const runs: TextRun[] = []
+  for (const n of nodes) {
+    if (n.type !== 'text') continue
+    const marks: string[] = (n.marks ?? []).map((m: any) => m.type)
+    runs.push(run(n.text ?? '', {
+      bold:          marks.includes('bold'),
+      italics:       marks.includes('italic'),
+      underline:     marks.includes('underline') ? {} : undefined,
+      strike:        marks.includes('strike'),
+    }))
+  }
+  return runs.length > 0 ? runs : [run('')]
+}
+
+/**
+ * Convert 1 node paragraph (bên trong listItem hoặc top-level) → Paragraph,
+ * gắn numbering nếu nằm trong list. Heading được xử lý riêng ở
+ * renderRichTextField (listItem của TipTap chỉ chứa paragraph/list con,
+ * không chứa heading, nên hàm này không cần xử lý case đó).
+ */
+function rteBlockParagraph(node: any, listCtx?: { ref: string; level: number }): Paragraph {
+  const opts: any = { spacing: { before: 0, after: 60 } }
+  if (listCtx) {
+    opts.numbering = { reference: listCtx.ref, level: Math.min(listCtx.level, RTE_MAX_LEVELS - 1) }
+  }
+  return new Paragraph({ ...opts, children: rteInlineRuns(node.content) })
+}
+
+/** Runs cho heading — merge style heading vào từng run in đậm/nghiêng gốc của user */
+function rteHeadingRuns(nodes: any[] = [], style: any): TextRun[] {
+  const inline = nodes.filter(n => n.type === 'text')
+  if (inline.length === 0) return [run('', style)]
+  return inline.map(n => {
+    const marks: string[] = (n.marks ?? []).map((m: any) => m.type)
+    return run(n.text ?? '', {
+      ...style,
+      bold: true, // heading luôn đậm, không phụ thuộc mark gốc
+      italics: marks.includes('italic'),
+      underline: marks.includes('underline') ? {} : undefined,
+    })
+  })
+}
+
+/**
+ * Duyệt đệ quy list node (bulletList/orderedList) → mảng Paragraph.
+ * Mỗi listItem có thể chứa paragraph(s) + list con lồng bên trong —
+ * list con tăng `level` lên 1, dùng đúng reference (bullet/ordered)
+ * theo type của chính nó tại điểm đó (Word cho phép trộn bullet/số
+ * lồng nhau).
+ */
+function rteListParagraphs(listNode: any, level: number): Paragraph[] {
+  const ref = listNode.type === 'orderedList' ? RTE_ORDERED_REF : RTE_BULLET_REF
+  const out: Paragraph[] = []
+  for (const item of listNode.content ?? []) {
+    if (item.type !== 'listItem') continue
+    for (const child of item.content ?? []) {
+      if (child.type === 'bulletList' || child.type === 'orderedList') {
+        out.push(...rteListParagraphs(child, level + 1))
+      } else if (child.type === 'paragraph') {
+        out.push(rteBlockParagraph(child, { ref, level }))
+      }
+    }
+  }
+  return out
+}
+
+/** Entry point: TipTap doc JSON → mảng Paragraph để chèn vào docx */
+function renderRichTextField(doc: any): Paragraph[] {
+  const content: any[] = Array.isArray(doc?.content) ? doc.content : []
+  const out: Paragraph[] = []
+  for (const node of content) {
+    if (node.type === 'bulletList' || node.type === 'orderedList') {
+      out.push(...rteListParagraphs(node, 0))
+    } else if (node.type === 'heading') {
+      const level = node.attrs?.level ?? 2
+      const style = level <= 2
+        ? { size: 24, color: '1A237E' }
+        : level === 3
+          ? { size: 22, color: '283593' }
+          : { size: 20, color: '37474F' }
+      out.push(new Paragraph({
+        spacing: { before: 160, after: 60 },
+        children: rteHeadingRuns(node.content, style),
+      }))
+    } else if (node.type === 'paragraph') {
+      // Bỏ qua paragraph rỗng liên tiếp để tránh nhiều dòng trắng thừa khi export
+      const hasText = (node.content ?? []).some((n: any) => n.type === 'text' && n.text)
+      if (hasText) out.push(rteBlockParagraph(node))
+    }
+    // blockquote/codeBlock/horizontalRule: chưa hỗ trợ toolbar phía FE nên
+    // hiếm khi xuất hiện — nếu có, bỏ qua thay vì crash export.
+  }
+  return out.length > 0 ? out : [para([run('—', { color: '9E9E9E' })])]
+}
+
 // ─── SCHEMA-DRIVEN RENDERER ───────────────────────────────────
 /**
  * Duyệt qua FormField[] (schema), render từng field thành
@@ -405,6 +515,12 @@ async function renderFields(
       case 'checkbox':
         elements.push(fieldLabel(field.label, field.required))
         elements.push(...renderCheckboxValue(value))
+        break
+
+      case 'richtext':
+        elements.push(fieldLabel(field.label, field.required))
+        elements.push(...renderRichTextField(value))
+        elements.push(new Paragraph({ spacing: { before: 0, after: 60 }, children: [] }))
         break
 
       case 'image': {
@@ -557,6 +673,26 @@ export const exportSurveyWord = asyncHandler(async (req: Request, res: Response)
   const doc = new Document({
     styles: {
       default: { document: { run: { font: FONT, size: 20 } } },
+    },
+    numbering: {
+      config: [
+        {
+          reference: RTE_BULLET_REF,
+          levels: ['●', '○', '▪', '‣'].map((char, level) => ({
+            level, format: LevelFormat.BULLET, text: char,
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 360 + level * 360, hanging: 260 } } },
+          })),
+        },
+        {
+          reference: RTE_ORDERED_REF,
+          levels: [0, 1, 2, 3].map(level => ({
+            level, format: LevelFormat.DECIMAL, text: `%${level + 1}.`,
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 360 + level * 360, hanging: 260 } } },
+          })),
+        },
+      ],
     },
     sections: [{
       properties: {
