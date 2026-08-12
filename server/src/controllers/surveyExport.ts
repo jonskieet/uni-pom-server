@@ -26,7 +26,7 @@ const prisma = globalForPrisma._prisma
 // ─── Types (mirror src/types/form.ts) ────────────────────────
 
 type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'checkbox'
-  | 'radio' | 'date' | 'table' | 'image' | 'section'
+  | 'radio' | 'date' | 'table' | 'image' | 'section' | 'richtext'
 
 interface TableColumn { key: string; label: string; type: string; options?: string[] }
 
