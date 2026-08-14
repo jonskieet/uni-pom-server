@@ -542,30 +542,56 @@ function rteListParagraphs(listNode: any, level: number): Paragraph[] {
  * Paragraph riêng trong TableCell.children thay vì gộp lại, để giống bản
  * gốc Word nhất. Header luôn in đậm + canh giữa bất kể mark gốc của user.
  */
-function rteCellParagraphs(node: any, isHeader: boolean): Paragraph[] {
-  const paraNodes = (node.content ?? []).filter((c: any) => c.type === 'paragraph')
-  const list = paraNodes.length > 0 ? paraNodes : [{ content: [] }]
-  return list.map((p: any) => {
-    const inline = (p.content ?? []).filter((n: any) => n.type === 'text')
-    const runs = isHeader
-      ? (inline.length > 0 ? inline : [{ text: '' }]).map((n: any) => {
-          const marks: string[] = (n.marks ?? []).map((m: any) => m.type)
-          return run(n.text ?? '', {
-            bold: true,
-            italics: marks.includes('italic'),
-            underline: marks.includes('underline') ? {} : undefined,
-            size: 18,
+/**
+ * Nội dung 1 ô bảng (tableCell/tableHeader). Hỗ trợ nhiều paragraph con
+ * (Word cho xuống dòng trong ô — giữ nguyên từng dòng), VÀ ảnh (dùng cho ô
+ * chứa ảnh trong bảng "gallery ảnh" — xem groupConsecutiveImages ở
+ * RichTextEditor.tsx, hoặc ảnh nằm sẵn trong ô bảng gốc của Word). Async vì
+ * ảnh cần fetchImageRun tải về từ Supabase Storage trước khi nhúng vào docx.
+ */
+async function rteCellParagraphs(node: any, isHeader: boolean): Promise<Paragraph[]> {
+  const children: any[] = node.content ?? []
+  const out: Paragraph[] = []
+  for (const c of children) {
+    if (c.type === 'paragraph') {
+      const inline = (c.content ?? []).filter((n: any) => n.type === 'text')
+      const runs = isHeader
+        ? (inline.length > 0 ? inline : [{ text: '' }]).map((n: any) => {
+            const marks: string[] = (n.marks ?? []).map((m: any) => m.type)
+            return run(n.text ?? '', {
+              bold: true,
+              italics: marks.includes('italic'),
+              underline: marks.includes('underline') ? {} : undefined,
+              size: 18,
+            })
           })
-        })
-      : rteInlineRuns(p.content)
-    return new Paragraph({
-      spacing: { before: 0, after: 0 },
-      alignment: isHeader
-        ? AlignmentType.CENTER
-        : (p.attrs?.textAlign ? RTE_ALIGN_MAP[p.attrs.textAlign] ?? AlignmentType.LEFT : AlignmentType.LEFT),
-      children: runs,
-    })
-  })
+        : rteInlineRuns(c.content)
+      out.push(new Paragraph({
+        spacing: { before: 0, after: 0 },
+        alignment: isHeader
+          ? AlignmentType.CENTER
+          : (c.attrs?.textAlign ? RTE_ALIGN_MAP[c.attrs.textAlign] ?? AlignmentType.LEFT : AlignmentType.LEFT),
+        children: runs,
+      }))
+    } else if (c.type === 'image' && c.attrs?.src) {
+      const imgRun = await fetchImageRun(c.attrs.src)
+      if (imgRun) {
+        out.push(new Paragraph({
+          spacing: { before: 0, after: 0 },
+          alignment: AlignmentType.CENTER,
+          children: [imgRun],
+        }))
+      }
+    }
+  }
+  return out.length > 0 ? out : [new Paragraph({ children: [] })]
+}
+
+/** Ô chỉ chứa đúng 1 ảnh, không có chữ — dùng để tự bỏ viền (bảng "gallery
+ *  ảnh" gom nhiều ảnh cạnh nhau không cần viền như bảng dữ liệu thật). */
+function rteCellIsImageOnly(node: any): boolean {
+  const children: any[] = node.content ?? []
+  return children.length === 1 && children[0].type === 'image'
 }
 
 /**
@@ -575,7 +601,7 @@ function rteCellParagraphs(node: any, isHeader: boolean): Paragraph[] {
  * Chia đều độ rộng cột theo CONTENT_W (docx không cần biết độ rộng gốc từ
  * Word, chỉ cần tổng khớp trang A4).
  */
-function renderRteTable(tableNode: any): Table {
+async function renderRteTable(tableNode: any): Promise<Table> {
   const rows: any[] = (tableNode.content ?? []).filter((r: any) => r.type === 'tableRow')
   if (rows.length === 0) {
     return new Table({
@@ -594,26 +620,31 @@ function renderRteTable(tableNode: any): Table {
   )
   const colWidth = Math.floor(CONTENT_W / colCount)
 
-  const docxRows = rows.map((r: any) => {
+  const docxRows: TableRow[] = []
+  for (const r of rows) {
     const cells: any[] = r.content ?? []
     const hasHeader = cells.some((c: any) => c.type === 'tableHeader')
-    const tableCells = cells.map((c: any) => {
+    const tableCells: TableCell[] = []
+    for (const c of cells) {
       const isHeader = c.type === 'tableHeader'
       const colspan = c.attrs?.colspan ?? 1
       const rowspan = c.attrs?.rowspan ?? 1
-      return new TableCell({
+      const imageOnly = rteCellIsImageOnly(c)
+      tableCells.push(new TableCell({
         width: { size: colWidth * colspan, type: WidthType.DXA },
         ...(colspan > 1 ? { columnSpan: colspan } : {}),
         ...(rowspan > 1 ? { rowSpan: rowspan } : {}),
-        borders: bordersThin(),
-        margins: { top: 60, bottom: 60, left: 100, right: 100 },
+        borders: imageOnly ? bordersNone() : bordersThin(),
+        margins: imageOnly
+          ? { top: 40, bottom: 40, left: 40, right: 40 }
+          : { top: 60, bottom: 60, left: 100, right: 100 },
         verticalAlign: VerticalAlign.CENTER,
         shading: isHeader ? { fill: 'E8EAF6', type: ShadingType.CLEAR } : undefined,
-        children: rteCellParagraphs(c, isHeader),
-      })
-    })
-    return new TableRow({ tableHeader: hasHeader, children: tableCells })
-  })
+        children: await rteCellParagraphs(c, isHeader),
+      }))
+    }
+    docxRows.push(new TableRow({ tableHeader: hasHeader, children: tableCells }))
+  }
 
   return new Table({
     width: { size: CONTENT_W, type: WidthType.DXA },
@@ -665,7 +696,7 @@ async function renderRichTextField(doc: any): Promise<(Paragraph | Table)[]> {
       // Node bảng của extension @tiptap/extension-table — cấp block, ngang
       // hàng với paragraph/heading/image. Dùng chung được cho cả bảng chèn
       // tay lẫn bảng nhập từ file .docx qua mammoth (kể cả ô gộp).
-      out.push(renderRteTable(node))
+      out.push(await renderRteTable(node))
     }
     // blockquote/codeBlock/horizontalRule: chưa hỗ trợ toolbar phía FE nên
     // hiếm khi xuất hiện — nếu có, bỏ qua thay vì crash export.

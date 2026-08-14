@@ -19,9 +19,12 @@
 // bullet bằng font ký hiệu (Wingdings/Symbol) mà trình duyệt không có
 // font đó (nguyên nhân gây ô vuông ▯ khi paste thường). Ảnh nhúng trong
 // .docx cũng được tự động upload lên Supabase Storage, chú thích ảnh
-// (đoạn ngay sau ảnh) được tự canh giữa, và số thứ tự heading tự sinh bởi
-// mammoth (luôn ra số Ả Rập, bị reset về 1 ở mỗi heading) được tính lại
-// đúng — La Mã hoa cho H2, Ả Rập cho H3, chữ cái thường cho H4.
+// (đoạn ngay sau ảnh) được tự canh giữa, số thứ tự heading tự sinh bởi
+// mammoth (luôn ra số Ả Rập, bị reset về 1 ở mỗi heading — kể cả khi số
+// đó nằm lồng trong <span>) được tính lại đúng La Mã/Ả Rập/chữ cái theo
+// cấp, và các ảnh Word đặt cạnh nhau bằng vị trí neo nổi (mammoth không
+// giữ được toạ độ neo) được gom lại thành lưới cạnh nhau thay vì xếp dọc
+// từng ảnh một.
 // ============================================================
 import { useRef, useState } from 'react'
 import { useEditor, EditorContent, type JSONContent } from '@tiptap/react'
@@ -115,6 +118,50 @@ function autoCenterImageCaptions(html: string): string {
   return doc.body.innerHTML
 }
 
+// Word cho phép đặt nhiều ảnh CẠNH NHAU bằng cách neo nổi (floating/anchored
+// position) — đây là vị trí x/y tuyệt đối, KHÔNG phải cấu trúc ngữ nghĩa, và
+// mammoth (chủ đích, đã ghi rõ trong tài liệu của thư viện) không cố tái tạo
+// lại vị trí neo đó — chỉ xuất từng ảnh theo đúng THỨ TỰ trong file XML, mỗi
+// ảnh 1 dòng. Đây là giới hạn thật của thư viện, không có cách đọc lại toạ độ
+// neo qua mammoth. Cách xử lý thực tế: gom các <p><img></p> ĐỨNG LIỀN NHAU
+// (2 ảnh trở lên, không có chữ xen giữa) vào 1 bảng không viền — mỗi hàng
+// `perRow` ảnh — để hiển thị/xuất Word CẠNH NHAU thay vì xếp dọc từng ảnh 1.
+// Không đảm bảo khớp 100% layout gốc (vd. lưới 2x2 có thể ra thành 2 hàng x 2
+// cột đúng, nhưng thứ tự trái-phải/trên-dưới dựa theo thứ tự XML chứ không
+// phải toạ độ thật) — đánh đổi chấp nhận được vì mammoth vốn không cho biết
+// toạ độ gốc để làm chính xác hơn.
+function groupConsecutiveImages(html: string, perRow = 2): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const isImageOnlyPara = (el: Element) =>
+    el.tagName === 'P' && el.children.length === 1 && el.children[0].tagName === 'IMG'
+
+  const children = Array.from(doc.body.children)
+  let i = 0
+  while (i < children.length) {
+    if (!isImageOnlyPara(children[i])) { i++; continue }
+    const group: Element[] = []
+    let j = i
+    while (j < children.length && isImageOnlyPara(children[j])) { group.push(children[j]); j++ }
+
+    if (group.length >= 2) {
+      const table = doc.createElement('table')
+      for (let r = 0; r < group.length; r += perRow) {
+        const tr = doc.createElement('tr')
+        for (let c = r; c < Math.min(r + perRow, group.length); c++) {
+          const td = doc.createElement('td')
+          td.appendChild(group[c].firstElementChild!.cloneNode(true)) // <img>
+          tr.appendChild(td)
+        }
+        table.appendChild(tr)
+      }
+      group[0].replaceWith(table)
+      for (let k = 1; k < group.length; k++) group[k].remove()
+    }
+    i = j
+  }
+  return doc.body.innerHTML
+}
+
 const ROMAN_TABLE: [number, string][] = [
   [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
   [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
@@ -144,15 +191,30 @@ function toLowerLetter(n: number): string {
 // Heading không có số tự sinh (VD: Tiêu đề chính của phiếu, hoặc số được
 // người dùng gõ tay sẵn như "I." "STT") được GIỮ NGUYÊN, không đụng tới —
 // tránh đánh số nhầm vào những chỗ vốn dĩ không phải mục lục.
+// Dò text node không rỗng ĐẦU TIÊN trong toàn bộ cây con của 1 element,
+// kể cả khi nằm lồng trong <span>/<a> (mammoth hay bọc run gốc/bookmark
+// theo kiểu này) — tìm trực tiếp trên h.childNodes (chỉ cấp 1) sẽ bỏ sót
+// những trường hợp đó và không đánh số lại được.
+function firstNonEmptyTextNode(el: Node): Text | null {
+  for (const child of Array.from(el.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE && (child.textContent ?? '').trim().length > 0) {
+      return child as Text
+    }
+    if (child.nodeType === Node.ELEMENT_NODE) {
+      const found = firstNonEmptyTextNode(child)
+      if (found) return found
+    }
+  }
+  return null
+}
+
 function fixHeadingNumbering(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html')
   const headings = Array.from(doc.body.querySelectorAll('h2, h3, h4'))
   const counters = { h2: 0, h3: 0, h4: 0 }
 
   for (const h of headings) {
-    const firstText = Array.from(h.childNodes).find(
-      n => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim().length > 0
-    ) as Text | undefined
+    const firstText = firstNonEmptyTextNode(h)
     if (!firstText?.textContent) continue
 
     const match = firstText.textContent.match(/^\s*(\d+)([.)])\s+/)
@@ -270,7 +332,8 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
         }
       )
       const fixedHtml = fixHeadingNumbering(result.value)
-      editor.chain().focus().insertContent(autoCenterImageCaptions(fixedHtml)).run()
+      const groupedHtml = groupConsecutiveImages(fixedHtml)
+      editor.chain().focus().insertContent(autoCenterImageCaptions(groupedHtml)).run()
       if (result.messages?.length) {
         console.warn('[RichTextEditor] mammoth cảnh báo khi đọc .docx:', result.messages)
       }
@@ -433,6 +496,11 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
         }
         .ProseMirror td > p, .ProseMirror th > p { margin: 0; }
         .ProseMirror .selectedCell { background: ${colors.primaryLight}; }
+        .ProseMirror td:has(> img:only-child) {
+          border: none;
+          padding: 4px;
+          text-align: center;
+        }
         .rte-empty::before {
           content: attr(data-placeholder); float: left; height: 0; pointer-events: none;
           color: ${colors.textTertiary};
