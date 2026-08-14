@@ -18,8 +18,10 @@
 // nên bullet/số list và bảng ra đúng cấu trúc ngay cả khi Word hiển thị
 // bullet bằng font ký hiệu (Wingdings/Symbol) mà trình duyệt không có
 // font đó (nguyên nhân gây ô vuông ▯ khi paste thường). Ảnh nhúng trong
-// .docx cũng được tự động upload lên Supabase Storage, và chú thích ảnh
-// (đoạn ngay sau ảnh) được tự canh giữa.
+// .docx cũng được tự động upload lên Supabase Storage, chú thích ảnh
+// (đoạn ngay sau ảnh) được tự canh giữa, và số thứ tự heading tự sinh bởi
+// mammoth (luôn ra số Ả Rập, bị reset về 1 ở mỗi heading) được tính lại
+// đúng — La Mã hoa cho H2, Ả Rập cho H3, chữ cái thường cho H4.
 // ============================================================
 import { useRef, useState } from 'react'
 import { useEditor, EditorContent, type JSONContent } from '@tiptap/react'
@@ -110,6 +112,67 @@ function autoCenterImageCaptions(html: string): string {
       next.setAttribute('style', `${next.getAttribute('style') ?? ''};text-align:center`.replace(/^;/, ''))
     }
   })
+  return doc.body.innerHTML
+}
+
+const ROMAN_TABLE: [number, string][] = [
+  [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+  [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+]
+function toRomanUpper(n: number): string {
+  let num = n
+  let out = ''
+  for (const [v, s] of ROMAN_TABLE) { while (num >= v) { out += s; num -= v } }
+  return out
+}
+function toLowerLetter(n: number): string {
+  return String.fromCharCode(96 + n) // 1 -> a, 2 -> b, ...
+}
+
+// mammoth KHÔNG đọc numFmt thật (upperRoman/lowerLetter/...) của Word — nó
+// luôn render số tự sinh (đến từ numPr của Word) thành số Ả Rập thường
+// "1." "2."..., và vì mỗi heading bị style-map tách rời khỏi <ol> gốc
+// (xem MAMMOTH_STYLE_MAP) nên bộ đếm bị NGẮT QUÃNG, luôn quay về "1." ở
+// từng heading thay vì tăng dần đúng thứ tự — đây chính là nguyên nhân
+// "I., II., III." (hoặc "1., 2., 3." đúng thứ tự) trong Word bị hiện lại
+// thành "1." lặp lại ở mọi heading khi nhập vào app.
+//
+// Cách xử lý: chỉ heading nào mammoth CÓ tự sinh số (dò bằng regex số Ả
+// Rập ở đầu) mới được đánh số lại — theo đúng quy ước văn bản hành chính
+// phổ biến (H2 = số La Mã hoa "I., II.", H3 = số Ả Rập "1., 2.", H4 = chữ
+// cái thường "a), b)"), bộ đếm reset về 0 khi gặp heading cấp cao hơn.
+// Heading không có số tự sinh (VD: Tiêu đề chính của phiếu, hoặc số được
+// người dùng gõ tay sẵn như "I." "STT") được GIỮ NGUYÊN, không đụng tới —
+// tránh đánh số nhầm vào những chỗ vốn dĩ không phải mục lục.
+function fixHeadingNumbering(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const headings = Array.from(doc.body.querySelectorAll('h2, h3, h4'))
+  const counters = { h2: 0, h3: 0, h4: 0 }
+
+  for (const h of headings) {
+    const firstText = Array.from(h.childNodes).find(
+      n => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim().length > 0
+    ) as Text | undefined
+    if (!firstText?.textContent) continue
+
+    const match = firstText.textContent.match(/^\s*(\d+)([.)])\s+/)
+    if (!match) continue // không phải số mammoth tự sinh → giữ nguyên
+
+    const tag = h.tagName.toLowerCase()
+    let prefix: string
+    if (tag === 'h2') {
+      counters.h2 += 1; counters.h3 = 0; counters.h4 = 0
+      prefix = `${toRomanUpper(counters.h2)}. `
+    } else if (tag === 'h3') {
+      counters.h3 += 1; counters.h4 = 0
+      prefix = `${counters.h3}. `
+    } else {
+      counters.h4 += 1
+      prefix = `${toLowerLetter(counters.h4)}) `
+    }
+    firstText.textContent = prefix + firstText.textContent.slice(match[0].length)
+  }
+
   return doc.body.innerHTML
 }
 
@@ -206,7 +269,8 @@ export function RichTextEditor({ content, onChange, readOnly, placeholder }: Pro
           }),
         }
       )
-      editor.chain().focus().insertContent(autoCenterImageCaptions(result.value)).run()
+      const fixedHtml = fixHeadingNumbering(result.value)
+      editor.chain().focus().insertContent(autoCenterImageCaptions(fixedHtml)).run()
       if (result.messages?.length) {
         console.warn('[RichTextEditor] mammoth cảnh báo khi đọc .docx:', result.messages)
       }
