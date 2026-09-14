@@ -32,10 +32,10 @@ const STAGES = [
   {
     phase: 2,
     label: 'Định giá',
-    role: 'sale_admin',
+    role: 'sales_admin',
     steps: [
-      { key: 'price',    label: 'Sale Admin định giá BOM',     role: 'sale_admin', triggerStatuses: ['tp_approved', 'revision_price'] },
-      { key: 'send_sa',  label: 'Gửi BOM hoàn chỉnh cho Sale', role: 'sale_admin', triggerStatuses: ['tp_approved'] },
+      { key: 'price',    label: 'Sale Admin định giá BOM',     role: 'sales_admin', triggerStatuses: ['tp_approved', 'revision_price'] },
+      { key: 'send_sa',  label: 'Gửi BOM hoàn chỉnh cho Sale', role: 'sales_admin', triggerStatuses: ['tp_approved'] },
     ],
   },
   {
@@ -126,7 +126,7 @@ export const getMyProgress = asyncHandler(async (req: Request, res: Response) =>
     params.pop() // không dùng userId filter
     params.push(userId) // vẫn push để $1 có giá trị (dùng cho created check)
     roleFilter = `p.status IN ('submitted','revision_tech','construction','inspection') OR (p.reviewed_by = $1 AND p.status IN ('closed_won','project_completed'))`
-  } else if (userRole === 'sale_admin') {
+  } else if (userRole === 'sales_admin') {
     roleFilter = `p.status IN ('tp_approved','revision_price') OR (p.sale_admin_id = $1 AND p.status = 'pricing_done')`
   } else if (userRole === 'sales') {
     roleFilter = `p.assigned_sale_id = $1 AND p.status NOT IN ('draft','submitted','tp_approved','closed_lost','project_completed')`
@@ -216,31 +216,31 @@ export const getMyProgress = asyncHandler(async (req: Request, res: Response) =>
 function getNextAction(
   status: string,
   role: string
-): { label: string; action: string } | null {
-  const map: Record<string, Record<string, { label: string; action: string }>> = {
+): { label: string; action: string; route?: string } | null {
+  const map: Record<string, Record<string, { label: string; action: string; route?: string }>> = {
     draft: {
-      technical: { label: 'Nộp BOM để duyệt', action: 'submit_bom' },
+      technical: { label: 'Mở và hoàn thiện BOM', action: 'submit_bom', route: '/pom-history' },
     },
     submitted: {
-      technical_lead: { label: 'Duyệt BOM', action: 'approve_bom' },
+      technical_lead: { label: 'Mở hồ sơ để duyệt', action: 'approve_bom', route: '/lead-pom' },
     },
     revision_tech: {
-      technical: { label: 'Cập nhật BOM & nộp lại', action: 'resubmit_bom' },
+      technical: { label: 'Sửa BOM theo yêu cầu', action: 'resubmit_bom', route: '/pom-history' },
     },
     tp_approved: {
-      sale_admin: { label: 'Bắt đầu định giá', action: 'start_pricing' },
+      sales_admin: { label: 'Mở màn hình định giá', action: 'start_pricing', route: '/sale-admin-pom' },
     },
     revision_price: {
-      sale_admin: { label: 'Sửa giá & gửi lại Sale', action: 'revise_price' },
+      sales_admin: { label: 'Sửa giá theo yêu cầu', action: 'revise_price', route: '/sale-admin-pom' },
     },
     pricing_done: {
-      sales: { label: 'Gửi hồ sơ cho khách hàng', action: 'send_to_client' },
+      sales: { label: 'Mở hồ sơ khách hàng', action: 'send_to_client', route: '/sale-pom' },
     },
     sent_to_client: {
-      sales: { label: 'Ghi nhận phản hồi KH', action: 'record_feedback' },
+      sales: { label: 'Ghi nhận phản hồi KH', action: 'record_feedback', route: '/sale-pom' },
     },
     negotiating: {
-      sales: { label: 'Chốt hợp đồng', action: 'close_deal' },
+      sales: { label: 'Cập nhật thương lượng', action: 'close_deal', route: '/sale-pom' },
     },
     closed_won: {
       technical: { label: 'Bắt đầu thi công', action: 'start_construction' },
@@ -264,28 +264,24 @@ function getNextAction(
 // ─────────────────────────────────────────────────────────────
 export const transitionPomStatus = asyncHandler(async (req: Request, res: Response) => {
   const pomId   = parseInt(req.params.id)
-  const userId  = (req as any).user?.id
-  const role    = (req as any).user?.role
+  const userId  = req.user?.id
+  const role    = req.user?.role
   const { action, note, reason } = req.body as {
     action: string
     note?: string
     reason?: string
   }
 
-  const pom = await prisma.$queryRawUnsafe<any[]>(
-    `SELECT id, status, created_by, assigned_sale_id, sale_admin_id, reviewed_by
-     FROM poms WHERE id = $1`, pomId
-  )
-  if (!pom.length) throw new AppError(404, 'Không tìm thấy BOM')
-  const p = pom[0]
+  if (!Number.isInteger(pomId)) throw new AppError(400, 'BOM không hợp lệ')
+  if (!action) throw new AppError(400, 'Thiếu hành động chuyển trạng thái')
 
   // Bảng chuyển trạng thái hợp lệ
   type Transition = {
     fromStatus: string
     roles: string[]
     toStatus: string
-    extraUpdates?: string
-    params?: unknown[]
+    auditAction: string
+    requiresReason?: boolean
   }
 
   const TRANSITIONS: Record<string, Transition> = {
@@ -293,129 +289,163 @@ export const transitionPomStatus = asyncHandler(async (req: Request, res: Respon
       fromStatus: 'draft',
       roles: ['technical'],
       toStatus: 'submitted',
+      auditAction: 'submitted',
     },
     resubmit_bom: {
       fromStatus: 'revision_tech',
       roles: ['technical'],
       toStatus: 'submitted',
+      auditAction: 'tech_revised',
     },
     approve_bom: {
       fromStatus: 'submitted',
       roles: ['technical_lead'],
       toStatus: 'tp_approved',
-      extraUpdates: `, reviewed_by = ${userId}`,
+      auditAction: 'tp_approved',
     },
     reject_bom: {
       fromStatus: 'submitted',
       roles: ['technical_lead'],
       toStatus: 'draft',
-      extraUpdates: `, return_reason = '${reason ?? ''}', revision_count = revision_count + 1`,
+      auditAction: 'tp_returned',
+      requiresReason: true,
     },
     start_pricing: {
       fromStatus: 'tp_approved',
-      roles: ['sale_admin'],
+      roles: ['sales_admin'],
       toStatus: 'pricing_done',
-      extraUpdates: `, sale_admin_id = ${userId}`,
+      auditAction: 'pricing_done',
     },
     revise_price: {
       fromStatus: 'revision_price',
-      roles: ['sale_admin'],
+      roles: ['sales_admin'],
       toStatus: 'pricing_done',
+      auditAction: 'price_revised',
     },
     send_to_client: {
       fromStatus: 'pricing_done',
       roles: ['sales'],
       toStatus: 'sent_to_client',
+      auditAction: 'sent_to_client',
     },
     record_feedback: {
       fromStatus: 'sent_to_client',
       roles: ['sales'],
       toStatus: 'negotiating',
+      auditAction: 'client_feedback',
     },
     request_price_revision: {
       fromStatus: 'negotiating',
       roles: ['sales'],
       toStatus: 'revision_price',
-      extraUpdates: `, return_reason = '${reason ?? ''}'`,
+      auditAction: 'return_to_price',
+      requiresReason: true,
     },
     request_tech_revision: {
       fromStatus: 'negotiating',
       roles: ['sales'],
       toStatus: 'revision_tech',
-      extraUpdates: `, return_reason = '${reason ?? ''}', revision_count = revision_count + 1`,
+      auditAction: 'return_to_tech',
+      requiresReason: true,
     },
     re_approve_tech: {
       fromStatus: 'revision_tech',
       roles: ['technical_lead'],
       toStatus: 'tp_approved',
+      auditAction: 'tp_reapproved',
     },
     close_deal: {
       fromStatus: 'negotiating',
       roles: ['sales'],
       toStatus: 'closed_won',
-      extraUpdates: `, closed_at = NOW()`,
+      auditAction: 'closed_won',
     },
     lose_deal: {
       fromStatus: 'negotiating',
-      roles: ['sales', 'sale_admin', 'admin'],
+      roles: ['sales', 'sales_admin', 'admin'],
       toStatus: 'closed_lost',
-      extraUpdates: `, closed_at = NOW(), return_reason = '${reason ?? ''}'`,
+      auditAction: 'closed_lost',
+      requiresReason: true,
     },
     start_construction: {
       fromStatus: 'closed_won',
       roles: ['technical', 'technical_lead', 'admin'],
       toStatus: 'construction',
+      auditAction: 'construction_started',
     },
     move_to_inspection: {
       fromStatus: 'construction',
       roles: ['technical_lead', 'admin'],
       toStatus: 'inspection',
+      auditAction: 'inspection_started',
     },
     complete_project: {
       fromStatus: 'inspection',
       roles: ['technical_lead', 'admin'],
       toStatus: 'project_completed',
+      auditAction: 'project_completed',
     },
   }
 
   const t = TRANSITIONS[action]
   if (!t) throw new AppError(400, `Action không hợp lệ: ${action}`)
-  if (!t.roles.includes(role)) throw new AppError(403, 'Không có quyền thực hiện hành động này')
-  if (p.status !== t.fromStatus)
-    throw new AppError(400, `BOM đang ở trạng thái "${p.status}", không thể ${action}`)
+  if (!role || (!t.roles.includes(role) && role !== 'admin')) throw new AppError(403, 'Không có quyền thực hiện hành động này')
+  if (t.requiresReason && !reason?.trim()) throw new AppError(400, 'Vui lòng nhập lý do')
 
-  // Cập nhật status
-  const extra = t.extraUpdates ?? ''
-  await prisma.$executeRawUnsafe(
-    `UPDATE poms SET status = $1, updated_at = NOW() ${extra} WHERE id = $2`,
-    t.toStatus, pomId
-  )
-
-  // Ghi audit log
-  await prisma.$executeRawUnsafe(
-    `INSERT INTO audit_logs (pom_id, from_status, to_status, changed_by, note, created_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    pomId, p.status, t.toStatus, userId, note ?? null
-  )
-
-  // Nếu chuyển sang construction/inspection → tạo construction log
-  if (['construction', 'inspection', 'project_completed'].includes(t.toStatus)) {
-    const logTypeMap: Record<string, string> = {
-      construction:      'progress',
-      inspection:        'progress',
-      project_completed: 'handover',
-    }
-    const titleMap: Record<string, string> = {
-      construction:      'Bắt đầu thi công',
-      inspection:        'Chuyển sang giai đoạn nghiệm thu',
-      project_completed: 'Bàn giao & hoàn tất dự án',
-    }
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO pom_construction_logs (pom_id, log_type, title, content, created_by)
-       VALUES ($1, $2, $3, $4, $5)`,
-      pomId, logTypeMap[t.toStatus], titleMap[t.toStatus], note ?? null, userId
+  const fromStatus = await prisma.$transaction(async tx => {
+    const rows = await tx.$queryRawUnsafe<any[]>(
+      `SELECT id, status, created_by, assigned_sale_id, sale_admin_id, reviewed_by
+       FROM poms WHERE id = $1 FOR UPDATE`, pomId
     )
-  }
+    if (!rows.length) throw new AppError(404, 'Không tìm thấy BOM')
+    const p = rows[0]
+    if (p.status !== t.fromStatus) {
+      throw new AppError(409, `BOM đã chuyển sang trạng thái "${p.status}". Vui lòng tải lại dữ liệu.`)
+    }
+    if (role !== 'admin') {
+      if (role === 'technical' && p.created_by !== userId) throw new AppError(403, 'Bạn không phải kỹ thuật phụ trách BOM này')
+      if (role === 'sales' && p.assigned_sale_id !== userId) throw new AppError(403, 'BOM chưa được giao cho bạn')
+      if (role === 'sales_admin' && p.sale_admin_id && p.sale_admin_id !== userId) throw new AppError(403, 'BOM đang do Sale Admin khác phụ trách')
+    }
+
+    const setsReviewer = ['approve_bom', 're_approve_tech'].includes(action)
+    const setsSaleAdmin = ['start_pricing', 'revise_price'].includes(action)
+    const incrementsRevision = ['reject_bom', 'request_tech_revision'].includes(action)
+    const setsClosedAt = ['close_deal', 'lose_deal'].includes(action)
+    const clearsReturnReason = ['resubmit_bom', 'approve_bom', 're_approve_tech', 'revise_price'].includes(action)
+
+    await tx.$executeRawUnsafe(`
+      UPDATE poms SET
+        status = $1,
+        reviewed_by = CASE WHEN $2::boolean THEN $3 ELSE reviewed_by END,
+        sale_admin_id = CASE WHEN $4::boolean THEN $3 ELSE sale_admin_id END,
+        return_reason = CASE WHEN $5::boolean THEN NULL WHEN $6::boolean THEN $7 ELSE return_reason END,
+        revision_count = revision_count + CASE WHEN $8::boolean THEN 1 ELSE 0 END,
+        closed_at = CASE WHEN $9::boolean THEN NOW() ELSE closed_at END,
+        updated_at = NOW()
+      WHERE id = $10
+    `, t.toStatus, setsReviewer, userId ?? null, setsSaleAdmin,
+       clearsReturnReason, Boolean(reason?.trim()), reason?.trim() ?? null,
+       incrementsRevision, setsClosedAt, pomId)
+
+    await tx.$executeRawUnsafe(`
+      INSERT INTO audit_logs (pom_id, actor_id, from_status, to_status, action, note, metadata, created_at)
+      VALUES ($1, $2, $3, $4, $5::"AuditAction", $6, $7::jsonb, NOW())
+    `, pomId, userId ?? null, p.status, t.toStatus, t.auditAction,
+       note?.trim() || reason?.trim() || null, JSON.stringify({ source: 'workflow', action }))
+
+    if (['construction', 'inspection', 'project_completed'].includes(t.toStatus)) {
+      const logTypeMap: Record<string, string> = { construction: 'progress', inspection: 'progress', project_completed: 'handover' }
+      const titleMap: Record<string, string> = {
+        construction: 'Bắt đầu thi công', inspection: 'Chuyển sang giai đoạn nghiệm thu', project_completed: 'Bàn giao & hoàn tất dự án',
+      }
+      await tx.$executeRawUnsafe(`
+        INSERT INTO pom_construction_logs (pom_id, log_type, title, content, created_by)
+        VALUES ($1, $2, $3, $4, $5)
+      `, pomId, logTypeMap[t.toStatus], titleMap[t.toStatus], note?.trim() || null, userId ?? null)
+    }
+    return p.status as string
+  })
 
   // Đồng bộ tiến độ sang phiên workflow engine đang liên kết BOM này (nếu có).
   // Không chặn response nếu lỗi đồng bộ — BOM vẫn là nguồn sự thật chính.
@@ -427,7 +457,7 @@ export const transitionPomStatus = asyncHandler(async (req: Request, res: Respon
 
   res.json(successResponse({
     id: pomId,
-    from_status: p.status,
+    from_status: fromStatus,
     to_status: t.toStatus,
     status_label: STATUS_LABEL[t.toStatus],
   }))
@@ -523,6 +553,17 @@ export const addConstructionLog = asyncHandler(async (req: Request, res: Respons
     throw new AppError(403, 'Chỉ Kỹ thuật / Trưởng phòng KT mới có quyền')
 
   if (!title?.trim()) throw new AppError(400, 'Thiếu tiêu đề nhật ký')
+  if (!['progress', 'incident', 'resolved', 'handover'].includes(log_type)) {
+    throw new AppError(400, 'Loại nhật ký không hợp lệ')
+  }
+
+  const pomRows = await prisma.$queryRawUnsafe<{ status: string }[]>(
+    `SELECT status FROM poms WHERE id = $1`, pomId
+  )
+  if (!pomRows.length) throw new AppError(404, 'Không tìm thấy BOM')
+  if (!['construction', 'inspection', 'project_completed'].includes(pomRows[0].status)) {
+    throw new AppError(409, 'Chỉ có thể ghi nhật ký khi dự án đang thi công hoặc nghiệm thu')
+  }
 
   const [row] = await prisma.$queryRawUnsafe<any[]>(
     `INSERT INTO pom_construction_logs (pom_id, log_type, title, content, created_by)
@@ -568,8 +609,8 @@ export const getAdminOverview = asyncHandler(async (_req: Request, res: Response
       COUNT(*)::int                                                                           AS total_active,
       -- KPI
       ROUND(
-        COUNT(*) FILTER (WHERE status = 'closed_won') * 100.0 /
-        NULLIF(COUNT(*) FILTER (WHERE status IN ('closed_won','closed_lost')), 0)
+        COUNT(*) FILTER (WHERE status IN ('closed_won','construction','inspection','project_completed')) * 100.0 /
+        NULLIF(COUNT(*) FILTER (WHERE status IN ('closed_won','construction','inspection','project_completed','closed_lost')), 0)
       )::int AS win_rate,
       -- Tắc nghẽn: BOM chờ TP KT > 3 ngày
       COUNT(*) FILTER (

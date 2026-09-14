@@ -1,7 +1,7 @@
 // server/src/routes/workflows.ts (cập nhật – thêm progress routes)
 
 import { Router } from 'express'
-import { authMiddleware } from '../middleware/auth'
+import { authMiddleware, adminOnly, adminOrTechLead } from '../middleware/auth'
 
 // Workflow template/instance controllers (cũ)
 import {
@@ -46,7 +46,7 @@ router.get('/linked/instances', getLinkedInstances)
 router.get('/my-progress', getMyProgress)
 
 // GET  /api/workflows/admin-overview       → tổng quan 5 giai đoạn cho Admin
-router.get('/admin-overview', getAdminOverview)
+router.get('/admin-overview', adminOnly, getAdminOverview)
 
 // ─── POM TRANSITION (mới) ────────────────────────────────────
 // POST /api/workflows/poms/:id/transition            → chuyển trạng thái BOM
@@ -58,9 +58,9 @@ router.get('/poms/:id/construction-logs',     getConstructionLogs)
 // (các route "/:id" này luôn để CUỐI vì khớp mọi đoạn 1 segment)
 router.get('/stats',    getWorkflowStats)
 router.get('/',         getWorkflows)
-router.post('/',        createWorkflow)
+router.post('/',        adminOrTechLead, createWorkflow)
 router.get('/:id',      getWorkflowById)
-router.put('/:id',      updateWorkflow)
-router.delete('/:id',   deleteWorkflow)
+router.put('/:id',      adminOrTechLead, updateWorkflow)
+router.delete('/:id',   adminOrTechLead, deleteWorkflow)
 
 export default router

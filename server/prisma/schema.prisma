@@ -257,6 +257,9 @@ enum PomStatus {
   revision_tech   // Sale gửi trả Kỹ thuật để sửa phương án
   closed_won      // Chốt thành công
   closed_lost     // Không chốt được
+  construction    // Đang triển khai thi công sau khi chốt
+  inspection      // Đang nghiệm thu
+  project_completed // Đã bàn giao và hoàn tất dự án
 }
 
 // ============================================================
@@ -322,6 +325,9 @@ enum AuditAction {
   tp_reapproved     // TP KT duyệt lại sau khi sửa KT
   closed_won        // Chốt thành công
   closed_lost       // Không chốt
+  construction_started
+  inspection_started
+  project_completed
 }
 
 // ============================================================
