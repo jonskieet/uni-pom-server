@@ -35,6 +35,28 @@ const POM_FULL_INCLUDE = {
   survey: true,
 }
 
+// Danh sách chỉ cần metadata + số lượng/tổng tiền. Trước đây endpoint GET
+// /poms dùng POM_FULL_INCLUDE nên kéo cả thông số sản phẩm, hãng, danh mục và
+// toàn bộ nội dung phiếu khảo sát cho từng BOM. Payload tăng rất nhanh và là
+// nguyên nhân rõ nhất khiến dashboard/danh sách khựng khi dữ liệu lớn.
+const POM_LIST_INCLUDE = {
+  solution: { select: { id: true, name: true, code: true } },
+  creator: { select: { id: true, full_name: true, role: true } },
+  reviewer: { select: { id: true, full_name: true, role: true } },
+  assignedSale: { select: { id: true, full_name: true, role: true } },
+  saleAdmin: { select: { id: true, full_name: true, role: true } },
+  items: { select: { quantity: true, unit_price: true, vat_rate: true } },
+  survey: {
+    select: {
+      id: true,
+      report_code: true,
+      status: true,
+      survey_date: true,
+      site_address: true,
+    },
+  },
+}
+
 // ── Enrich pom(s) với contact info từ raw SQL contacts table ─
 async function enrichWithContact<T extends { contact_id?: number | null }>(
   poms: T[]
@@ -91,6 +113,7 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
   const limit = Math.min(100, parseInt(req.query.limit as string) || 20)
   const skip = (page - 1) * limit
   const statusParam = req.query.status as string | undefined
+  const search = (req.query.search as string | undefined)?.trim()
   const createdBy = req.query.created_by ? parseInt(req.query.created_by as string) : undefined
   const excludeSurveyed = req.query.exclude_surveyed === 'true'
   const assignedSale   = req.query.assigned_sale_id ? parseInt(req.query.assigned_sale_id as string) : undefined
@@ -101,6 +124,13 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
     : undefined
 
   const where: Prisma.PomWhereInput = {
+    ...(search && {
+      OR: [
+        { pom_code: { contains: search, mode: 'insensitive' } },
+        { project_name: { contains: search, mode: 'insensitive' } },
+        { customer_name: { contains: search, mode: 'insensitive' } },
+      ],
+    }),
     ...(status && { status }),
     ...(createdBy && { created_by: createdBy }),
     ...(assignedSale && { assigned_sale_id: assignedSale }),
@@ -111,7 +141,7 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
   const [poms, total] = await Promise.all([
     prisma.pom.findMany({
       where,
-      include: POM_FULL_INCLUDE,
+      include: POM_LIST_INCLUDE,
       skip,
       take: limit,
       orderBy: { created_at: 'desc' },
@@ -120,7 +150,25 @@ export const getPoms = asyncHandler(async (req: Request, res: Response) => {
   ])
 
   const enriched = await enrichWithContact(poms as any[])
-  res.json(successResponse({ data: enriched, pagination: { page, limit, total, pages: Math.ceil(total / limit) } }))
+  const summarized = enriched.map((pom: any) => {
+    const { items, ...metadata } = pom
+    return {
+      ...metadata,
+      // Giữ cả quan hệ lồng và các field phẳng để tương thích mọi màn hình cũ.
+      solution_name: pom.solution?.name ?? null,
+      solution_code: pom.solution?.code ?? null,
+      created_by_name: pom.creator?.full_name ?? null,
+      reviewer_name: pom.reviewer?.full_name ?? null,
+      assigned_sale_name: pom.assignedSale?.full_name ?? null,
+      sale_admin_name: pom.saleAdmin?.full_name ?? null,
+      item_count: items.length,
+      total_amount: items.reduce(
+        (sum: number, item: any) => sum + Number(item.unit_price) * Number(item.quantity) * (1 + Number(item.vat_rate)),
+        0,
+      ),
+    }
+  })
+  res.json(successResponse({ data: summarized, pagination: { page, limit, total, pages: Math.ceil(total / limit) } }))
 })
 
 // ── GET /poms/:id ──────────────────────────────────────────────
