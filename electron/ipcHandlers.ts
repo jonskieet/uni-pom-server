@@ -279,6 +279,11 @@ ipcMain.handle('products:getPriceHistory', async (_e, id: number) => {
 
 // ── POMS ─────────────────────────────────────────────────────
 
+ipcMain.handle('poms:getDashboard', async () => {
+  try { return await api.get('/poms/dashboard') }
+  catch (error: any) { return { error: error.message || 'Không thể tải dashboard BOM' } }
+})
+
 ipcMain.handle('poms:getAll', async (_e, filters: any) => {
   try {
     const res = await api.get<any>('/poms', filters)

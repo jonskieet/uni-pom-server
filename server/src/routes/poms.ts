@@ -3,6 +3,7 @@
 // ============================================================
 
 import { Router } from 'express'
+import { getPomsDashboard } from '../controllers/pomsDashboard'
 import {
   getPoms,
   getPomById,
@@ -40,6 +41,7 @@ router.use(authMiddleware)
 
 // ── CRUD cơ bản ──────────────────────────────────────────────
 router.get('/',    anyRole,        getPoms)
+router.get('/dashboard', anyRole, getPomsDashboard)
 router.get('/:id', anyRole,        getPomById)
 router.post('/',   technicalRoles, createPom)
 router.put('/:id', technicalRoles, updatePom)

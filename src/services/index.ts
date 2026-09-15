@@ -51,6 +51,7 @@ export const SolutionService = {
 
 // ── PomService ────────────────────────────────────────────────
 export const PomService = {
+  getDashboard: () => ipc(window.api.poms.getDashboard()),
   getAll:       (filters?: any)                         => window.api.poms.getAll(filters),
   getById:      (id: number)                            => window.api.poms.getById(id),
   create:       (data: any)                             => ipc(window.api.poms.create(data)),

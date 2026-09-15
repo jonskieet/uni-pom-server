@@ -63,6 +63,7 @@ declare global {
         delete:  (id: number) => Promise<any>
       }
       poms: {
+        getDashboard: () => Promise<any>
         getAll:       (filters?: any) => Promise<any[]>
         getById:      (id: number) => Promise<any>
         create:       (data: any) => Promise<any>

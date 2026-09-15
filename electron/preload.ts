@@ -82,6 +82,7 @@ const api = {
     delete:  (id: number)               => ipcRenderer.invoke('solutions:delete', id),
   },
   poms: {
+    getDashboard: () => ipcRenderer.invoke('poms:getDashboard'),
     getAll:       (filters?)              => ipcRenderer.invoke('poms:getAll', filters),
     getById:      (id)                    => ipcRenderer.invoke('poms:getById', id),
     create:       (data)                  => ipcRenderer.invoke('poms:create', data),
