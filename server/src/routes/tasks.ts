@@ -11,7 +11,7 @@ import {
   getBuckets, createBucket, updateBucket, deleteBucket, reorderBuckets,
   getTasks, getTask, createTask, updateTask, deleteTask, reorderTask, copyTask,
   addChecklist, toggleChecklist, deleteChecklist, updateChecklist,
-  getComments, addComment, deleteComment,
+  getComments, addComment, deleteComment, updateComment, getChatParticipants,
   getPlannerUsers,
   getPlanStats,
   getMyTasks,
@@ -69,7 +69,9 @@ router.delete('/tasks/:taskId/checklist/:itemId',         anyRole, deleteCheckli
 
 // ── Comments ───────────────────────────────────────────────
 router.get('/tasks/:taskId/comments',               getComments)
+router.get('/tasks/:taskId/chat-participants',       getChatParticipants)
 router.post('/tasks/:taskId/comments',              anyRole, addComment)
+router.put('/tasks/:taskId/comments/:commentId',    anyRole, updateComment)
 router.delete('/tasks/:taskId/comments/:commentId', anyRole, deleteComment) // ← MỚI
 
 // ── Stats (Chart view) ─────────────────────────────────────
