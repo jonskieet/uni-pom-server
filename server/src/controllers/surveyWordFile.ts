@@ -14,6 +14,7 @@
 import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import mammoth from 'mammoth'
+import sanitizeHtml from 'sanitize-html'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
 import {
@@ -103,8 +104,25 @@ export const previewSurveyWordFile = asyncHandler(async (req: Request, res: Resp
 
   const result = await mammoth.convertToHtml({ buffer })
 
+  const safeHtml = sanitizeHtml(result.value, {
+    allowedTags: [
+      'a', 'blockquote', 'br', 'caption', 'col', 'colgroup', 'div', 'em',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'img', 'li', 'ol', 'p',
+      'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th',
+      'thead', 'tr', 'u', 'ul',
+    ],
+    allowedAttributes: {
+      a: ['href', 'title'],
+      col: ['span', 'width'],
+      img: ['alt', 'height', 'src', 'width'],
+      '*': ['class', 'style'],
+    },
+    allowedSchemes: ['http', 'https'],
+    allowProtocolRelative: false,
+  })
+
   res.json(successResponse({
-    html: result.value,
+    html: safeHtml,
     file_name: survey.word_file_name,
     warnings: (result.messages ?? []).map(m => m.message),
   }))

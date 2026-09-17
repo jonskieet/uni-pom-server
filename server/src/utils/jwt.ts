@@ -4,7 +4,13 @@
 
 import jwt, { SignOptions } from 'jsonwebtoken'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET
+  if (!secret || secret.length < 32) {
+    throw new Error('JWT_SECRET must be configured and contain at least 32 characters')
+  }
+  return secret
+}
 
 export interface JwtPayload {
   id: number
@@ -17,7 +23,7 @@ export interface JwtPayload {
  */
 export function generateToken(payload: JwtPayload, expiresIn: string | number = '30d'): string {
   const options: SignOptions = { expiresIn: expiresIn as any }
-  return jwt.sign(payload, JWT_SECRET as string, options)
+  return jwt.sign(payload, getJwtSecret(), options)
 }
 
 /**
@@ -25,8 +31,21 @@ export function generateToken(payload: JwtPayload, expiresIn: string | number = 
  */
 export function verifyToken(token: string): JwtPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET)
-    return decoded as JwtPayload
+    const decoded = jwt.verify(token, getJwtSecret())
+    if (
+      typeof decoded === 'object' &&
+      decoded !== null &&
+      typeof decoded.id === 'number' &&
+      typeof decoded.username === 'string' &&
+      typeof decoded.role === 'string'
+    ) {
+      return {
+        id: decoded.id,
+        username: decoded.username,
+        role: decoded.role,
+      }
+    }
+    return null
   } catch (err) {
     return null
   }

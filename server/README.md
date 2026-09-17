@@ -23,7 +23,7 @@ cp .env.example .env
 
 # Edit .env với thông tin Supabase
 # DATABASE_URL=postgresql://[user]:[password]@[host]:[port]/[database]
-# JWT_SECRET=your-secret-key
+# JWT_SECRET=<random secret with at least 32 characters>
 ```
 
 **Database URL Format từ Supabase:**
