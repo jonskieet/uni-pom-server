@@ -635,7 +635,7 @@ export const getTask = asyncHandler(async (req: Request, res: Response) => {
 })
 
 export const createTask = asyncHandler(async (req: Request, res: Response) => {
-  const { title, description, plan_id, bucket_id, assigned_to, priority, due_date, start_date, status } = req.body
+  const { title, description, plan_id, bucket_id, assigned_to, priority, due_date, start_date, status, checklist } = req.body
   const createdBy = req.user!.id
 
   if (!title?.trim()) throw new AppError(400, 'Tên nhiệm vụ không được để trống')
@@ -682,6 +682,19 @@ export const createTask = asyncHandler(async (req: Request, res: Response) => {
       INSERT INTO task_assignees (task_id, user_id) VALUES (${task.id}, ${uid})
       ON CONFLICT DO NOTHING
     `
+  }
+
+  if (Array.isArray(checklist)) {
+    const checklistTitles = checklist
+      .map((item: any) => typeof item === 'string' ? item.trim() : '')
+      .filter(Boolean)
+      .slice(0, 10)
+    for (let index = 0; index < checklistTitles.length; index++) {
+      await prisma.$executeRaw`
+        INSERT INTO task_checklists (task_id, title, sort_order)
+        VALUES (${task.id}, ${checklistTitles[index]}, ${index})
+      `
+    }
   }
 
   // ── Gửi email thông báo cho các assignee ────────────────────────────
