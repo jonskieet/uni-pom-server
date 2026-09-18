@@ -26,6 +26,7 @@ import businessTripsRoutes from './routes/businessTrips' // ← MỚI
 import leaveRequestsRoutes from './routes/leaveRequests' // ← MỚI
 import scheduleRoutes      from './routes/schedule'       // ← MỚI
 import workflowRoutes      from './routes/workflows'       // ← Workflow Module
+import warehouseRoutes     from './routes/warehouse'       // ← UNI IMS (Quản lý kho)
 
 export function createApp(): Express {
   const app = express()
@@ -85,6 +86,7 @@ export function createApp(): Express {
   app.use('/api/leave-requests', leaveRequestsRoutes)    // ← MỚI
   app.use('/api/schedule',       scheduleRoutes)          // ← MỚI
   app.use('/api/workflows',      workflowRoutes)          // ← Workflow Module
+  app.use('/api/warehouse',      warehouseRoutes)         // ← UNI IMS (Quản lý kho)
 
   app.use(notFoundHandler)
   app.use(errorHandler)
