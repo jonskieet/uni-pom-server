@@ -15,29 +15,29 @@ import { PrismaClient, Prisma } from '@prisma/client'
 import { successResponse } from '../utils/response'
 import { AppError, asyncHandler } from '../middleware/errorHandler'
 
-const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
+export const globalForPrisma = global as typeof global & { _prisma?: PrismaClient }
 if (!globalForPrisma._prisma) globalForPrisma._prisma = new PrismaClient()
-const prisma = globalForPrisma._prisma
+export const prisma = globalForPrisma._prisma
 
-type Tx = Prisma.TransactionClient
+export type Tx = Prisma.TransactionClient
 
 // ── Helpers ───────────────────────────────────────────────────────────
-const num = (v: any, def = 0): number => {
+export const num = (v: any, def = 0): number => {
   const n = typeof v === 'string' ? parseFloat(v) : Number(v)
   return Number.isFinite(n) ? n : def
 }
-const int = (v: any): number | null => {
+export const int = (v: any): number | null => {
   const n = parseInt(String(v), 10)
   return Number.isFinite(n) ? n : null
 }
-const str = (v: any): string | null => {
+export const str = (v: any): string | null => {
   if (v === undefined || v === null) return null
   const s = String(v).trim()
   return s === '' ? null : s
 }
 
 /** Sinh mã phiếu dạng PN2609-0001 (prefix + YYMM + số thứ tự trong tháng) */
-async function nextCode(tx: Tx, table: string, prefix: string): Promise<string> {
+export async function nextCode(tx: Tx, table: string, prefix: string): Promise<string> {
   const now = new Date()
   const yy = String(now.getFullYear()).slice(-2)
   const mm = String(now.getMonth() + 1).padStart(2, '0')
@@ -52,7 +52,7 @@ async function nextCode(tx: Tx, table: string, prefix: string): Promise<string> 
 }
 
 /** Validate danh sách dòng hàng của phiếu */
-function parseLines(raw: any, opts: { price?: boolean } = {}): Array<{
+export function parseLines(raw: any, opts: { price?: boolean } = {}): Array<{
   item_id: number; quantity: number; unit_price: number; note: string | null
 }> {
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -73,7 +73,7 @@ function parseLines(raw: any, opts: { price?: boolean } = {}): Array<{
 }
 
 /** Cộng / trừ tồn kho + ghi sổ nhật ký. delta > 0 = nhập, delta < 0 = xuất */
-async function applyMovement(tx: Tx, p: {
+export async function applyMovement(tx: Tx, p: {
   warehouse_id: number
   item_id: number
   delta: number
@@ -145,7 +145,7 @@ async function applyMovement(tx: Tx, p: {
   return { before: curQty, after: newQty }
 }
 
-const userId = (req: Request): number | null => (req.user?.id ?? null)
+export const userId = (req: Request): number | null => (req.user?.id ?? null)
 
 // ============================================================
 // DASHBOARD — số liệu tổng quan
@@ -161,7 +161,9 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
       COALESCE(SUM(s.quantity * s.avg_cost), 0)::float8 AS total_value,
       COALESCE(SUM(s.quantity), 0)::float8 AS total_quantity,
       COUNT(*) FILTER (WHERE s.quantity <= 0)::int AS out_of_stock,
-      COUNT(*) FILTER (WHERE i.min_qty > 0 AND s.quantity > 0 AND s.quantity <= i.min_qty)::int AS low_stock
+      COUNT(*) FILTER (WHERE i.min_qty > 0 AND s.quantity > 0 AND s.quantity <= i.min_qty)::int AS low_stock,
+      COALESCE(SUM(s.reserved_qty), 0)::float8 AS reserved_quantity,
+      COALESCE(SUM(s.reserved_qty * s.avg_cost), 0)::float8 AS reserved_value
     FROM public.wh_stocks s
     JOIN public.wh_items i ON i.id = s.item_id
     WHERE 1 = 1 ${whFilter}
@@ -174,18 +176,30 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
       (SELECT COUNT(*)::int FROM public.wh_transfers WHERE status = 'draft')  AS draft_transfers,
       (SELECT COUNT(*)::int FROM public.wh_counts    WHERE status = 'draft')  AS draft_counts,
       (SELECT COUNT(*)::int FROM public.wh_movements WHERE created_at::date = CURRENT_DATE) AS today_movements,
-      (SELECT COUNT(*)::int FROM public.wh_movements WHERE created_at::date = CURRENT_DATE - 1) AS yesterday_movements
+      (SELECT COUNT(*)::int FROM public.wh_movements WHERE created_at::date = CURRENT_DATE - 1) AS yesterday_movements,
+      (SELECT COUNT(*)::int FROM public.wh_requests WHERE status = 'submitted') AS pending_requests,
+      (SELECT COUNT(*)::int FROM public.wh_requests WHERE status = 'approved')  AS approved_requests,
+      (SELECT COUNT(*)::int FROM public.wh_purchase_orders WHERE status = 'ordered') AS open_pos,
+      (SELECT COALESCE(SUM(GREATEST(pi.quantity - pi.received_qty, 0)), 0)::float8
+         FROM public.wh_po_items pi
+         JOIN public.wh_purchase_orders p ON p.id = pi.po_id
+        WHERE p.status = 'ordered') AS incoming_quantity,
+      (SELECT COUNT(*)::int FROM public.wh_serials WHERE status = 'in_stock') AS serials_in_stock,
+      (SELECT COUNT(*)::int FROM public.wh_serials
+        WHERE warranty_end IS NOT NULL AND warranty_end BETWEEN CURRENT_DATE AND CURRENT_DATE + 60
+          AND status IN ('installed','issued')) AS warranty_expiring
   `
 
   const byWarehouse = await prisma.$queryRaw<any[]>`
-    SELECT w.id, w.code, w.name,
+    SELECT w.id, w.code, w.name, w.kind,
            COUNT(s.id)::int AS item_count,
            COALESCE(SUM(s.quantity), 0)::float8 AS quantity,
+           COALESCE(SUM(s.reserved_qty), 0)::float8 AS reserved,
            COALESCE(SUM(s.quantity * s.avg_cost), 0)::float8 AS value
       FROM public.wh_warehouses w
       LEFT JOIN public.wh_stocks s ON s.warehouse_id = w.id
      WHERE w.is_active
-     GROUP BY w.id, w.code, w.name
+     GROUP BY w.id, w.code, w.name, w.kind
      ORDER BY value DESC
   `
 
@@ -260,34 +274,41 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
 // ============================================================
 export const getWarehouses = asyncHandler(async (_req: Request, res: Response) => {
   const rows = await prisma.$queryRaw<any[]>`
-    SELECT w.*, u.full_name AS manager_name,
-           COALESCE(st.item_count, 0)::int    AS item_count,
-           COALESCE(st.total_value, 0)::float8 AS total_value
+    SELECT w.*, u.full_name AS manager_name, o.full_name AS owner_name,
+           COALESCE(st.item_count, 0)::int     AS item_count,
+           COALESCE(st.total_value, 0)::float8 AS total_value,
+           COALESCE(st.reserved, 0)::float8    AS reserved_qty
       FROM public.wh_warehouses w
       LEFT JOIN public.users u ON u.id = w.manager_id
+      LEFT JOIN public.users o ON o.id = w.owner_id
       LEFT JOIN (
-        SELECT warehouse_id, COUNT(*) AS item_count, SUM(quantity * avg_cost) AS total_value
+        SELECT warehouse_id, COUNT(*) AS item_count,
+               SUM(quantity * avg_cost) AS total_value,
+               SUM(reserved_qty) AS reserved
           FROM public.wh_stocks GROUP BY warehouse_id
       ) st ON st.warehouse_id = w.id
-     ORDER BY w.name
+     ORDER BY CASE w.kind WHEN 'main' THEN 0 WHEN 'crew' THEN 1 WHEN 'vehicle' THEN 2 ELSE 3 END, w.name
   `
   res.json(successResponse(rows))
 })
 
 export const createWarehouse = asyncHandler(async (req: Request, res: Response) => {
-  const { code, name, address, phone, manager_id, note } = req.body
+  const { code, name, address, phone, manager_id, note, kind, owner_id } = req.body
   if (!str(code) || !str(name)) throw new AppError(400, 'Thiếu mã kho hoặc tên kho')
+  const k = str(kind) ?? 'main'
+  if (!['main', 'crew', 'vehicle', 'virtual'].includes(k))
+    throw new AppError(400, 'Loại kho không hợp lệ')
   const rows = await prisma.$queryRawUnsafe<any[]>(
-    `INSERT INTO public.wh_warehouses (code, name, address, phone, manager_id, note)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    str(code), str(name), str(address), str(phone), int(manager_id), str(note)
+    `INSERT INTO public.wh_warehouses (code, name, address, phone, manager_id, note, kind, owner_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    str(code), str(name), str(address), str(phone), int(manager_id), str(note), k, int(owner_id)
   )
   res.status(201).json(successResponse(rows[0]))
 })
 
 export const updateWarehouse = asyncHandler(async (req: Request, res: Response) => {
   const id = int(req.params.id)
-  const { code, name, address, phone, manager_id, note, is_active } = req.body
+  const { code, name, address, phone, manager_id, note, is_active, kind, owner_id } = req.body
   const rows = await prisma.$queryRawUnsafe<any[]>(
     `UPDATE public.wh_warehouses SET
        code       = COALESCE($2, code),
@@ -296,10 +317,13 @@ export const updateWarehouse = asyncHandler(async (req: Request, res: Response) 
        phone      = $5,
        manager_id = $6,
        note       = $7,
-       is_active  = COALESCE($8, is_active)
+       is_active  = COALESCE($8, is_active),
+       kind       = COALESCE($9, kind),
+       owner_id   = $10
      WHERE id = $1 RETURNING *`,
     id, str(code), str(name), str(address), str(phone), int(manager_id), str(note),
-    is_active === undefined ? null : Boolean(is_active)
+    is_active === undefined ? null : Boolean(is_active),
+    str(kind), int(owner_id)
   )
   if (!rows.length) throw new AppError(404, 'Không tìm thấy kho')
   res.json(successResponse(rows[0]))
@@ -386,9 +410,13 @@ export const getItems = asyncHandler(async (req: Request, res: Response) => {
            i.min_qty::float8 AS min_qty, i.max_qty::float8 AS max_qty,
            i.unit_cost::float8 AS unit_cost, i.is_active,
            i.category_id, i.brand_id, i.product_id,
+           i.pack_unit, i.pack_size::float8 AS pack_size,
+           i.track_serial, i.warranty_months,
            c.name AS category_name, b.name AS brand_name,
            COALESCE(st.total_qty, 0)::float8   AS total_qty,
            COALESCE(st.total_value, 0)::float8 AS total_value,
+           COALESCE(st.reserved, 0)::float8    AS reserved_qty,
+           GREATEST(COALESCE(st.total_qty, 0) - COALESCE(st.reserved, 0), 0)::float8 AS available_qty,
            COALESCE(st.wh_count, 0)::int       AS warehouse_count,
            CASE
              WHEN COALESCE(st.total_qty, 0) <= 0 THEN 'out'
@@ -401,6 +429,7 @@ export const getItems = asyncHandler(async (req: Request, res: Response) => {
       LEFT JOIN (
         SELECT item_id,
                SUM(quantity) AS total_qty,
+               SUM(reserved_qty) AS reserved,
                SUM(quantity * avg_cost) AS total_value,
                COUNT(*) FILTER (WHERE quantity > 0) AS wh_count
           FROM public.wh_stocks
@@ -438,7 +467,9 @@ export const getItemDetail = asyncHandler(async (req: Request, res: Response) =>
 
   const stocks = await prisma.$queryRawUnsafe<any[]>(
     `SELECT s.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
-            s.quantity::float8 AS quantity, s.avg_cost::float8 AS avg_cost, s.updated_at
+            s.quantity::float8 AS quantity, s.avg_cost::float8 AS avg_cost,
+            s.reserved_qty::float8 AS reserved_qty,
+            GREATEST(s.quantity - s.reserved_qty, 0)::float8 AS available_qty, s.updated_at
        FROM public.wh_stocks s
        JOIN public.wh_warehouses w ON w.id = s.warehouse_id
       WHERE s.item_id = $1 ORDER BY w.name`, id)
@@ -457,7 +488,8 @@ export const getItemDetail = asyncHandler(async (req: Request, res: Response) =>
 
 export const createItem = asyncHandler(async (req: Request, res: Response) => {
   const { sku, name, product_id, category_id, brand_id, unit, spec, barcode,
-          min_qty, max_qty, unit_cost, image_url, note } = req.body
+          min_qty, max_qty, unit_cost, image_url, note,
+          pack_unit, pack_size, track_serial, warranty_months } = req.body
   if (!str(name)) throw new AppError(400, 'Thiếu tên mặt hàng')
 
   let finalSku = str(sku)
@@ -469,11 +501,13 @@ export const createItem = asyncHandler(async (req: Request, res: Response) => {
   const rows = await prisma.$queryRawUnsafe<any[]>(
     `INSERT INTO public.wh_items
        (sku, name, product_id, category_id, brand_id, unit, spec, barcode,
-        min_qty, max_qty, unit_cost, image_url, note, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        min_qty, max_qty, unit_cost, image_url, note,
+        pack_unit, pack_size, track_serial, warranty_months, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
     finalSku, str(name), int(product_id), int(category_id), int(brand_id),
     str(unit) ?? 'Cái', str(spec), str(barcode),
-    num(min_qty), num(max_qty), num(unit_cost), str(image_url), str(note), userId(req)
+    num(min_qty), num(max_qty), num(unit_cost), str(image_url), str(note),
+    str(pack_unit), num(pack_size), Boolean(track_serial), num(warranty_months), userId(req)
   )
   res.status(201).json(successResponse(rows[0]))
 })
@@ -481,7 +515,8 @@ export const createItem = asyncHandler(async (req: Request, res: Response) => {
 export const updateItem = asyncHandler(async (req: Request, res: Response) => {
   const id = int(req.params.id)
   const { sku, name, product_id, category_id, brand_id, unit, spec, barcode,
-          min_qty, max_qty, unit_cost, image_url, note, is_active } = req.body
+          min_qty, max_qty, unit_cost, image_url, note, is_active,
+          pack_unit, pack_size, track_serial, warranty_months } = req.body
   const rows = await prisma.$queryRawUnsafe<any[]>(
     `UPDATE public.wh_items SET
        sku = COALESCE($2, sku), name = COALESCE($3, name),
@@ -489,7 +524,10 @@ export const updateItem = asyncHandler(async (req: Request, res: Response) => {
        unit = COALESCE($7, unit), spec = $8, barcode = $9,
        min_qty = COALESCE($10, min_qty), max_qty = COALESCE($11, max_qty),
        unit_cost = COALESCE($12, unit_cost), image_url = $13, note = $14,
-       is_active = COALESCE($15, is_active)
+       is_active = COALESCE($15, is_active),
+       pack_unit = $16, pack_size = COALESCE($17, pack_size),
+       track_serial = COALESCE($18, track_serial),
+       warranty_months = COALESCE($19, warranty_months)
      WHERE id = $1 RETURNING *`,
     id, str(sku), str(name), int(product_id), int(category_id), int(brand_id),
     str(unit), str(spec), str(barcode),
@@ -497,7 +535,11 @@ export const updateItem = asyncHandler(async (req: Request, res: Response) => {
     max_qty === undefined ? null : num(max_qty),
     unit_cost === undefined ? null : num(unit_cost),
     str(image_url), str(note),
-    is_active === undefined ? null : Boolean(is_active)
+    is_active === undefined ? null : Boolean(is_active),
+    str(pack_unit),
+    pack_size === undefined ? null : num(pack_size),
+    track_serial === undefined ? null : Boolean(track_serial),
+    warranty_months === undefined ? null : num(warranty_months)
   )
   if (!rows.length) throw new AppError(404, 'Không tìm thấy mặt hàng')
   res.json(successResponse(rows[0]))
@@ -565,7 +607,9 @@ export const getStocks = asyncHandler(async (req: Request, res: Response) => {
   const status      = str(req.query.status)
   const rows = await prisma.$queryRaw<any[]>`
     SELECT v.*, v.quantity::float8 AS quantity, v.avg_cost::float8 AS avg_cost,
-           v.stock_value::float8 AS stock_value, v.min_qty::float8 AS min_qty
+           v.stock_value::float8 AS stock_value, v.min_qty::float8 AS min_qty,
+           v.reserved_qty::float8 AS reserved_qty, v.available_qty::float8 AS available_qty,
+           v.pack_size::float8 AS pack_size
       FROM public.wh_stock_overview v
      WHERE ${warehouseId ? Prisma.sql`v.warehouse_id = ${warehouseId}` : Prisma.sql`TRUE`}
        AND ${search
@@ -667,9 +711,15 @@ export const getReceiptDetail = asyncHandler(async (req: Request, res: Response)
 
 export const saveReceipt = asyncHandler(async (req: Request, res: Response) => {
   const id = req.params.id ? int(req.params.id) : null
-  const { warehouse_id, supplier_id, receipt_date, reference_no, note, items, post } = req.body
+  const { warehouse_id, supplier_id, receipt_date, reference_no, note, items, post,
+          receipt_type, pom_id, po_id } = req.body
   const whId = int(warehouse_id)
   if (!whId) throw new AppError(400, 'Chưa chọn kho nhập')
+  const rType = str(receipt_type) ?? 'purchase'
+  if (!['purchase', 'site_return', 'crew_return', 'other'].includes(rType))
+    throw new AppError(400, 'Loại phiếu nhập không hợp lệ')
+  if (rType === 'site_return' && !int(pom_id))
+    throw new AppError(400, 'Phiếu thu hồi từ công trình phải chọn dự án')
   const lines = parseLines(items)
   const total = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
   const uid = userId(req)
@@ -686,18 +736,19 @@ export const saveReceipt = asyncHandler(async (req: Request, res: Response) => {
       code = cur.code
       await tx.$executeRawUnsafe(
         `UPDATE public.wh_receipts SET warehouse_id=$2, supplier_id=$3, receipt_date=$4,
-           reference_no=$5, note=$6, total_amount=$7 WHERE id=$1`,
+           reference_no=$5, note=$6, total_amount=$7, receipt_type=$8, pom_id=$9, po_id=$10 WHERE id=$1`,
         docId, whId, int(supplier_id), str(receipt_date) ?? new Date().toISOString().slice(0, 10),
-        str(reference_no), str(note), total)
+        str(reference_no), str(note), total, rType, int(pom_id), int(po_id))
       await tx.$executeRawUnsafe(`DELETE FROM public.wh_receipt_items WHERE receipt_id = $1`, docId)
     } else {
       code = await nextCode(tx, 'wh_receipts', 'PN')
       const [row] = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_receipts
-           (code, warehouse_id, supplier_id, receipt_date, reference_no, note, total_amount, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+           (code, warehouse_id, supplier_id, receipt_date, reference_no, note, total_amount,
+            receipt_type, pom_id, po_id, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
         code, whId, int(supplier_id), str(receipt_date) ?? new Date().toISOString().slice(0, 10),
-        str(reference_no), str(note), total, uid)
+        str(reference_no), str(note), total, rType, int(pom_id), int(po_id), uid)
       docId = row.id
     }
 
@@ -715,9 +766,9 @@ export const saveReceipt = asyncHandler(async (req: Request, res: Response) => {
   res.status(id ? 200 : 201).json(successResponse(result, post ? 'Đã lưu và ghi sổ phiếu nhập' : 'Đã lưu phiếu nhập'))
 })
 
-async function postReceiptTx(tx: Tx, id: number, uid: number | null) {
+export async function postReceiptTx(tx: Tx, id: number, uid: number | null) {
   const [doc] = await tx.$queryRawUnsafe<any[]>(
-    `SELECT id, code, warehouse_id, status FROM public.wh_receipts WHERE id = $1 FOR UPDATE`, id)
+    `SELECT id, code, warehouse_id, status, po_id FROM public.wh_receipts WHERE id = $1 FOR UPDATE`, id)
   if (!doc) throw new AppError(404, 'Không tìm thấy phiếu nhập')
   if (doc.status === 'posted') throw new AppError(400, 'Phiếu đã được ghi sổ trước đó')
   if (doc.status === 'cancelled') throw new AppError(400, 'Phiếu đã bị huỷ')
@@ -736,6 +787,31 @@ async function postReceiptTx(tx: Tx, id: number, uid: number | null) {
   }
   await tx.$executeRawUnsafe(
     `UPDATE public.wh_receipts SET status='posted', posted_by=$2, posted_at=NOW() WHERE id=$1`, id, uid)
+
+  // Phiếu nhập gắn với đơn mua hàng → cập nhật số đã nhận, tự đóng đơn khi đủ
+  if (doc.po_id) await syncPurchaseOrderTx(tx, doc.po_id)
+}
+
+/** Cập nhật received_qty của đơn mua hàng từ các phiếu nhập đã ghi sổ */
+export async function syncPurchaseOrderTx(tx: Tx, poId: number) {
+  await tx.$executeRawUnsafe(
+    `UPDATE public.wh_po_items pi
+        SET received_qty = COALESCE((
+              SELECT SUM(ri.quantity)
+                FROM public.wh_receipts r
+                JOIN public.wh_receipt_items ri ON ri.receipt_id = r.id
+               WHERE r.po_id = $1 AND r.status = 'posted' AND ri.item_id = pi.item_id
+            ), 0)
+      WHERE pi.po_id = $1`, poId)
+
+  const [left] = await tx.$queryRawUnsafe<any[]>(
+    `SELECT COUNT(*)::int AS pending FROM public.wh_po_items
+      WHERE po_id = $1 AND received_qty < quantity`, poId)
+
+  await tx.$executeRawUnsafe(
+    `UPDATE public.wh_purchase_orders
+        SET status = CASE WHEN $2::int = 0 THEN 'received' ELSE 'ordered' END
+      WHERE id = $1 AND status IN ('ordered','received')`, poId, left?.pending ?? 1)
 }
 
 export const postReceipt = asyncHandler(async (req: Request, res: Response) => {
@@ -884,9 +960,63 @@ export const saveIssue = asyncHandler(async (req: Request, res: Response) => {
   res.status(id ? 200 : 201).json(successResponse(result, post ? 'Đã lưu và ghi sổ phiếu xuất' : 'Đã lưu phiếu xuất'))
 })
 
-async function postIssueTx(tx: Tx, id: number, uid: number | null) {
+/**
+ * Chặn lấy hàng đang được giữ cho dự án KHÁC.
+ * Hàng giữ cho chính dự án của phiếu thì vẫn được lấy bình thường.
+ */
+export async function assertNotReservedByOthers(tx: Tx, p: {
+  warehouse_id: number; item_id: number; quantity: number; pom_id?: number | null
+}) {
+  const [row] = await tx.$queryRawUnsafe<any[]>(
+    `SELECT s.quantity::float8 AS quantity,
+            COALESCE((SELECT SUM(r.quantity) FROM public.wh_reservations r
+                       WHERE r.warehouse_id = $1 AND r.item_id = $2
+                         AND r.status = 'active'
+                         AND ($3::int IS NULL OR r.pom_id IS DISTINCT FROM $3::int)
+                     ), 0)::float8 AS reserved_others,
+            i.sku, i.name, i.unit
+       FROM public.wh_items i
+       LEFT JOIN public.wh_stocks s ON s.warehouse_id = $1 AND s.item_id = $2
+      WHERE i.id = $2`,
+    p.warehouse_id, p.item_id, p.pom_id ?? null)
+
+  if (!row) return
+  const free = num(row.quantity) - num(row.reserved_others)
+  if (p.quantity > free) {
+    throw new AppError(400,
+      `"${row.sku} — ${row.name}": tồn ${num(row.quantity)} ${row.unit} nhưng đang giữ ${num(row.reserved_others)} cho dự án khác, ` +
+      `chỉ còn ${free < 0 ? 0 : free} khả dụng. Hãy giải phóng hàng giữ hoặc chọn kho khác.`)
+  }
+}
+
+/** Trừ dần số đang giữ của dự án khi hàng thực sự được xuất đi */
+export async function consumeReservationTx(tx: Tx, p: {
+  pom_id: number; warehouse_id: number; item_id: number; quantity: number
+}) {
+  let left = p.quantity
+  const rows = await tx.$queryRawUnsafe<any[]>(
+    `SELECT id, quantity::float8 AS quantity FROM public.wh_reservations
+      WHERE pom_id = $1 AND warehouse_id = $2 AND item_id = $3 AND status = 'active'
+      ORDER BY id FOR UPDATE`,
+    p.pom_id, p.warehouse_id, p.item_id)
+
+  for (const r of rows) {
+    if (left <= 0) break
+    const take = Math.min(left, num(r.quantity))
+    if (take >= num(r.quantity)) {
+      await tx.$executeRawUnsafe(
+        `UPDATE public.wh_reservations SET status='fulfilled', released_at=NOW() WHERE id=$1`, r.id)
+    } else {
+      await tx.$executeRawUnsafe(
+        `UPDATE public.wh_reservations SET quantity = quantity - $2 WHERE id=$1`, r.id, take)
+    }
+    left -= take
+  }
+}
+
+export async function postIssueTx(tx: Tx, id: number, uid: number | null) {
   const [doc] = await tx.$queryRawUnsafe<any[]>(
-    `SELECT id, code, warehouse_id, status FROM public.wh_issues WHERE id = $1 FOR UPDATE`, id)
+    `SELECT id, code, warehouse_id, status, pom_id FROM public.wh_issues WHERE id = $1 FOR UPDATE`, id)
   if (!doc) throw new AppError(404, 'Không tìm thấy phiếu xuất')
   if (doc.status === 'posted') throw new AppError(400, 'Phiếu đã được ghi sổ trước đó')
   if (doc.status === 'cancelled') throw new AppError(400, 'Phiếu đã bị huỷ')
@@ -897,11 +1027,21 @@ async function postIssueTx(tx: Tx, id: number, uid: number | null) {
   if (!items.length) throw new AppError(400, 'Phiếu chưa có dòng hàng nào')
 
   for (const l of items) {
+    await assertNotReservedByOthers(tx, {
+      warehouse_id: doc.warehouse_id, item_id: l.item_id,
+      quantity: num(l.quantity), pom_id: doc.pom_id,
+    })
     await applyMovement(tx, {
       warehouse_id: doc.warehouse_id, item_id: l.item_id,
       delta: -num(l.quantity), unit_price: num(l.unit_price),
       movement_type: 'issue', ref_table: 'wh_issues', ref_id: id, ref_code: doc.code, user_id: uid,
     })
+    if (doc.pom_id) {
+      await consumeReservationTx(tx, {
+        pom_id: doc.pom_id, warehouse_id: doc.warehouse_id,
+        item_id: l.item_id, quantity: num(l.quantity),
+      })
+    }
   }
   await tx.$executeRawUnsafe(
     `UPDATE public.wh_issues SET status='posted', posted_by=$2, posted_at=NOW() WHERE id=$1`, id, uid)
@@ -1001,7 +1141,7 @@ export const getTransferDetail = asyncHandler(async (req: Request, res: Response
 
 export const saveTransfer = asyncHandler(async (req: Request, res: Response) => {
   const id = req.params.id ? int(req.params.id) : null
-  const { from_warehouse_id, to_warehouse_id, transfer_date, note, items, post } = req.body
+  const { from_warehouse_id, to_warehouse_id, transfer_date, note, items, post, pom_id } = req.body
   const fromId = int(from_warehouse_id)
   const toId   = int(to_warehouse_id)
   if (!fromId || !toId) throw new AppError(400, 'Chưa chọn kho nguồn / kho đích')
@@ -1021,15 +1161,15 @@ export const saveTransfer = asyncHandler(async (req: Request, res: Response) => 
       code = cur.code
       await tx.$executeRawUnsafe(
         `UPDATE public.wh_transfers SET from_warehouse_id=$2, to_warehouse_id=$3,
-           transfer_date=$4, note=$5 WHERE id=$1`,
-        docId, fromId, toId, str(transfer_date) ?? new Date().toISOString().slice(0, 10), str(note))
+           transfer_date=$4, note=$5, pom_id=$6 WHERE id=$1`,
+        docId, fromId, toId, str(transfer_date) ?? new Date().toISOString().slice(0, 10), str(note), int(pom_id))
       await tx.$executeRawUnsafe(`DELETE FROM public.wh_transfer_items WHERE transfer_id = $1`, docId)
     } else {
       code = await nextCode(tx, 'wh_transfers', 'DC')
       const [row] = await tx.$queryRawUnsafe<any[]>(
-        `INSERT INTO public.wh_transfers (code, from_warehouse_id, to_warehouse_id, transfer_date, note, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-        code, fromId, toId, str(transfer_date) ?? new Date().toISOString().slice(0, 10), str(note), uid)
+        `INSERT INTO public.wh_transfers (code, from_warehouse_id, to_warehouse_id, transfer_date, note, pom_id, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        code, fromId, toId, str(transfer_date) ?? new Date().toISOString().slice(0, 10), str(note), int(pom_id), uid)
       docId = row.id
     }
 
@@ -1046,9 +1186,9 @@ export const saveTransfer = asyncHandler(async (req: Request, res: Response) => 
   res.status(id ? 200 : 201).json(successResponse(result, post ? 'Đã lưu và ghi sổ phiếu điều chuyển' : 'Đã lưu phiếu điều chuyển'))
 })
 
-async function postTransferTx(tx: Tx, id: number, uid: number | null) {
+export async function postTransferTx(tx: Tx, id: number, uid: number | null) {
   const [doc] = await tx.$queryRawUnsafe<any[]>(
-    `SELECT id, code, from_warehouse_id, to_warehouse_id, status
+    `SELECT id, code, from_warehouse_id, to_warehouse_id, status, pom_id
        FROM public.wh_transfers WHERE id = $1 FOR UPDATE`, id)
   if (!doc) throw new AppError(404, 'Không tìm thấy phiếu điều chuyển')
   if (doc.status === 'posted') throw new AppError(400, 'Phiếu đã được ghi sổ trước đó')
@@ -1063,6 +1203,10 @@ async function postTransferTx(tx: Tx, id: number, uid: number | null) {
   if (!items.length) throw new AppError(400, 'Phiếu chưa có dòng hàng nào')
 
   for (const l of items) {
+    await assertNotReservedByOthers(tx, {
+      warehouse_id: doc.from_warehouse_id, item_id: l.item_id,
+      quantity: num(l.quantity), pom_id: doc.pom_id,
+    })
     await applyMovement(tx, {
       warehouse_id: doc.from_warehouse_id, item_id: l.item_id,
       delta: -num(l.quantity), unit_price: num(l.avg_cost),
@@ -1073,6 +1217,20 @@ async function postTransferTx(tx: Tx, id: number, uid: number | null) {
       delta: num(l.quantity), unit_price: num(l.avg_cost),
       movement_type: 'transfer_in', ref_table: 'wh_transfers', ref_id: id, ref_code: doc.code, user_id: uid,
     })
+
+    // Giao hàng cho đội: phần giữ cho dự án đi theo hàng sang kho đích
+    if (doc.pom_id) {
+      await consumeReservationTx(tx, {
+        pom_id: doc.pom_id, warehouse_id: doc.from_warehouse_id,
+        item_id: l.item_id, quantity: num(l.quantity),
+      })
+      await tx.$executeRawUnsafe(
+        `INSERT INTO public.wh_reservations
+           (pom_id, warehouse_id, item_id, quantity, status, note, created_by)
+         VALUES ($1,$2,$3,$4,'active',$5,$6)`,
+        doc.pom_id, doc.to_warehouse_id, l.item_id, num(l.quantity),
+        `Theo phiếu điều chuyển ${doc.code}`, uid)
+    }
   }
   await tx.$executeRawUnsafe(
     `UPDATE public.wh_transfers SET status='posted', posted_by=$2, posted_at=NOW() WHERE id=$1`, id, uid)
