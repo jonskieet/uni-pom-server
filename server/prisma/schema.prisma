@@ -33,26 +33,26 @@ model User {
   updated_at    DateTime @updatedAt
 
   // Relations hiện có
-  poms              Pom[]    @relation("CreatedPoms")
-  pomReviews        Pom[]    @relation("ReviewedBy")
-  products          Product[]
-  priceHistory      PriceHistory[]
-  surveyReports     SurveyReport[]
-  formTemplates     FormTemplate[]
+  poms          Pom[]          @relation("CreatedPoms")
+  pomReviews    Pom[]          @relation("ReviewedBy")
+  products      Product[]
+  priceHistory  PriceHistory[]
+  surveyReports SurveyReport[]
+  formTemplates FormTemplate[]
 
   // Relations mới v2
-  assignedSalePoms  Pom[]    @relation("AssignedSale")      // Sale phụ trách
-  saleAdminPoms     Pom[]    @relation("PricedBySaleAdmin") // Sale Admin định giá
-  auditLogs         AuditLog[]
-  notifications     Notification[]
+  assignedSalePoms Pom[]          @relation("AssignedSale") // Sale phụ trách
+  saleAdminPoms    Pom[]          @relation("PricedBySaleAdmin") // Sale Admin định giá
+  auditLogs        AuditLog[]
+  notifications    Notification[]
 
   // Relations chấm công & công tác
   attendances   Attendance[]
   businessTrips BusinessTrip[]
 
   // Relations lịch tuần
-  createdScheduleEvents   ScheduleEvent[]     @relation("ScheduleEventCreator")
-  scheduledEventUsers     ScheduleEventUser[] @relation("ScheduleEventUsers")
+  createdScheduleEvents ScheduleEvent[]     @relation("ScheduleEventCreator")
+  scheduledEventUsers   ScheduleEventUser[] @relation("ScheduleEventUsers")
 
   // Thông tin ngân hàng — dùng cho QR chuyển khoản công tác phí
   bank_bin          String?
@@ -83,14 +83,14 @@ enum Role {
 // BRANDS
 // ============================================================
 model Brand {
-  id         Int       @id @default(autoincrement())
-  name       String    @unique
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
   short_name String?
   country    String?
   website    String?
   logo_path  String?
-  is_active  Boolean   @default(true)
-  created_at DateTime  @default(now())
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
 
   products Product[]
 
@@ -121,28 +121,28 @@ model Category {
 // PRODUCTS
 // ============================================================
 model Product {
-  id           Int           @id @default(autoincrement())
-  brand_id     Int
-  category_id  Int
-  name         String
-  part_number  String?       @unique
-  unit         String        @default("Cái")
-  price        Decimal       @default(0)
-  sell_price   Decimal?
-  vat_rate     Decimal       @default(0.10)
-  status       ProductStatus @default(active)
-  description  String?
-  spec         String?
-  origin       String?
-  warranty     String?
-  image_path   String?
-  created_by   Int?
-  created_at   DateTime      @default(now())
-  updated_at   DateTime      @updatedAt
+  id          Int           @id @default(autoincrement())
+  brand_id    Int
+  category_id Int
+  name        String
+  part_number String?       @unique
+  unit        String        @default("Cái")
+  price       Decimal       @default(0)
+  sell_price  Decimal?
+  vat_rate    Decimal       @default(0.10)
+  status      ProductStatus @default(active)
+  description String?
+  spec        String?
+  origin      String?
+  warranty    String?
+  image_path  String?
+  created_by  Int?
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @updatedAt
 
-  brand        Brand       @relation(fields: [brand_id], references: [id], onDelete: Restrict)
-  category     Category    @relation(fields: [category_id], references: [id], onDelete: Restrict)
-  creator      User?       @relation(fields: [created_by], references: [id], onDelete: SetNull)
+  brand        Brand          @relation(fields: [brand_id], references: [id], onDelete: Restrict)
+  category     Category       @relation(fields: [category_id], references: [id], onDelete: Restrict)
+  creator      User?          @relation(fields: [created_by], references: [id], onDelete: SetNull)
   pomItems     PomItem[]
   priceHistory PriceHistory[]
   surveyItems  SurveyItem[]
@@ -200,37 +200,37 @@ model Solution {
 // POMS — v2 (mở rộng)
 // ============================================================
 model Pom {
-  id              Int       @id @default(autoincrement())
-  pom_code        String    @unique
-  solution_id     Int?
-  created_by      Int                           // Kỹ thuật tạo
-  reviewed_by     Int?                          // TP KT duyệt
-  assigned_sale_id    Int?                      // Sale phụ trách (mới v2)
-  sale_admin_id       Int?                      // Sale Admin định giá (mới v2)
-  project_name    String
-  customer_name   String?
-  ward_id         Int?                          // UBND Phường/Xã liên kết (raw SQL table)
-  contact_id      Int?                          // Người liên hệ được chọn (raw SQL contacts table)
-  status          PomStatus @default(draft)
-  note            String?
-  return_reason   String?
-  revision_count  Int       @default(0)         // Số lần sửa (cho Admin KPI)
-  exported_at     DateTime?
-  closed_at       DateTime?                     // Khi chốt hoặc lost (mới v2)
-  items_updated_at DateTime?                    // NEW: cập nhật mỗi khi PomItem (thiết bị) bị thêm/sửa/xoá
-                                                  //      dùng để phiếu khảo sát phát hiện lệch dữ liệu
-  created_at      DateTime  @default(now())
-  updated_at      DateTime  @updatedAt
+  id               Int       @id @default(autoincrement())
+  pom_code         String    @unique
+  solution_id      Int?
+  created_by       Int // Kỹ thuật tạo
+  reviewed_by      Int? // TP KT duyệt
+  assigned_sale_id Int? // Sale phụ trách (mới v2)
+  sale_admin_id    Int? // Sale Admin định giá (mới v2)
+  project_name     String
+  customer_name    String?
+  ward_id          Int? // UBND Phường/Xã liên kết (raw SQL table)
+  contact_id       Int? // Người liên hệ được chọn (raw SQL contacts table)
+  status           PomStatus @default(draft)
+  note             String?
+  return_reason    String?
+  revision_count   Int       @default(0) // Số lần sửa (cho Admin KPI)
+  exported_at      DateTime?
+  closed_at        DateTime? // Khi chốt hoặc lost (mới v2)
+  items_updated_at DateTime? // NEW: cập nhật mỗi khi PomItem (thiết bị) bị thêm/sửa/xoá
+  //      dùng để phiếu khảo sát phát hiện lệch dữ liệu
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
-  solution         Solution? @relation(fields: [solution_id], references: [id], onDelete: SetNull)
-  creator          User      @relation("CreatedPoms", fields: [created_by], references: [id], onDelete: Restrict)
-  reviewer         User?     @relation("ReviewedBy", fields: [reviewed_by], references: [id], onDelete: SetNull)
-  assignedSale     User?     @relation("AssignedSale", fields: [assigned_sale_id], references: [id], onDelete: SetNull)
-  saleAdmin        User?     @relation("PricedBySaleAdmin", fields: [sale_admin_id], references: [id], onDelete: SetNull)
-  items            PomItem[]
-  survey           SurveyReport?
-  auditLogs        AuditLog[]
-  notifications    Notification[]
+  solution      Solution?      @relation(fields: [solution_id], references: [id], onDelete: SetNull)
+  creator       User           @relation("CreatedPoms", fields: [created_by], references: [id], onDelete: Restrict)
+  reviewer      User?          @relation("ReviewedBy", fields: [reviewed_by], references: [id], onDelete: SetNull)
+  assignedSale  User?          @relation("AssignedSale", fields: [assigned_sale_id], references: [id], onDelete: SetNull)
+  saleAdmin     User?          @relation("PricedBySaleAdmin", fields: [sale_admin_id], references: [id], onDelete: SetNull)
+  items         PomItem[]
+  survey        SurveyReport?
+  auditLogs     AuditLog[]
+  notifications Notification[]
 
   @@index([status])
   @@index([created_by])
@@ -247,18 +247,18 @@ model Pom {
 //   → revision_price (Sale Admin định giá lại) → pricing_done
 //   → revision_tech  (Kỹ thuật sửa)           → submitted (TP duyệt lại)
 enum PomStatus {
-  draft           // KT đang soạn
-  submitted       // KT đã nộp, chờ TP KT duyệt
-  tp_approved     // TP KT đã duyệt, chờ Sale Admin định giá
-  pricing_done    // Sale Admin đã định giá, chờ Sale gửi KH
-  sent_to_client  // Sale đã gửi KH, chờ phản hồi
-  negotiating     // KH đang thương lượng
-  revision_price  // Sale gửi trả Sale Admin để sửa giá
-  revision_tech   // Sale gửi trả Kỹ thuật để sửa phương án
-  closed_won      // Chốt thành công
-  closed_lost     // Không chốt được
-  construction    // Đang triển khai thi công sau khi chốt
-  inspection      // Đang nghiệm thu
+  draft // KT đang soạn
+  submitted // KT đã nộp, chờ TP KT duyệt
+  tp_approved // TP KT đã duyệt, chờ Sale Admin định giá
+  pricing_done // Sale Admin đã định giá, chờ Sale gửi KH
+  sent_to_client // Sale đã gửi KH, chờ phản hồi
+  negotiating // KH đang thương lượng
+  revision_price // Sale gửi trả Sale Admin để sửa giá
+  revision_tech // Sale gửi trả Kỹ thuật để sửa phương án
+  closed_won // Chốt thành công
+  closed_lost // Không chốt được
+  construction // Đang triển khai thi công sau khi chốt
+  inspection // Đang nghiệm thu
   project_completed // Đã bàn giao và hoàn tất dự án
 }
 
@@ -266,15 +266,15 @@ enum PomStatus {
 // POM ITEMS
 // ============================================================
 model PomItem {
-  id            Int     @id @default(autoincrement())
-  pom_id        Int
-  product_id    Int
-  quantity      Int     @db.SmallInt
-  unit_price    Decimal                   // Giá gốc từ Kỹ thuật
-  sale_price    Decimal?                  // Giá Sale Admin điều chỉnh (mới v2)
-  vat_rate      Decimal @default(0.10)
-  note          String?
-  sort_order    Int     @default(0)
+  id         Int      @id @default(autoincrement())
+  pom_id     Int
+  product_id Int
+  quantity   Int      @db.SmallInt
+  unit_price Decimal // Giá gốc từ Kỹ thuật
+  sale_price Decimal? // Giá Sale Admin điều chỉnh (mới v2)
+  vat_rate   Decimal  @default(0.10)
+  note       String?
+  sort_order Int      @default(0)
 
   pom         Pom          @relation(fields: [pom_id], references: [id], onDelete: Cascade)
   product     Product      @relation(fields: [product_id], references: [id], onDelete: Restrict)
@@ -290,15 +290,15 @@ model PomItem {
 // Ghi lại mọi chuyển trạng thái POM → Admin giám sát được toàn bộ lịch sử
 // ============================================================
 model AuditLog {
-  id          Int        @id @default(autoincrement())
+  id          Int         @id @default(autoincrement())
   pom_id      Int
-  actor_id    Int?                          // User thực hiện hành động
-  from_status PomStatus?                    // Trạng thái trước (null = tạo mới)
-  to_status   PomStatus                     // Trạng thái sau
-  action      AuditAction                   // Loại hành động
-  note        String?                       // Lý do / ghi chú
-  metadata    Json?                         // Dữ liệu bổ sung (VD: giá cũ/mới)
-  created_at  DateTime   @default(now())
+  actor_id    Int? // User thực hiện hành động
+  from_status PomStatus? // Trạng thái trước (null = tạo mới)
+  to_status   PomStatus // Trạng thái sau
+  action      AuditAction // Loại hành động
+  note        String? // Lý do / ghi chú
+  metadata    Json? // Dữ liệu bổ sung (VD: giá cũ/mới)
+  created_at  DateTime    @default(now())
 
   pom   Pom   @relation(fields: [pom_id], references: [id], onDelete: Cascade)
   actor User? @relation(fields: [actor_id], references: [id], onDelete: SetNull)
@@ -311,20 +311,20 @@ model AuditLog {
 }
 
 enum AuditAction {
-  created           // Kỹ thuật tạo BOM
-  submitted         // Kỹ thuật nộp lên TP KT
-  tp_approved       // TP KT duyệt
-  tp_returned       // TP KT trả về (kèm lý do)
-  pricing_done      // Sale Admin hoàn tất định giá
-  sent_to_client    // Sale gửi KH
-  client_feedback   // KH phản hồi
-  return_to_price   // Sale gửi trả Sale Admin sửa giá
-  return_to_tech    // Sale gửi trả Kỹ thuật sửa phương án
-  price_revised     // Sale Admin sửa giá xong
-  tech_revised      // Kỹ thuật sửa phương án xong
-  tp_reapproved     // TP KT duyệt lại sau khi sửa KT
-  closed_won        // Chốt thành công
-  closed_lost       // Không chốt
+  created // Kỹ thuật tạo BOM
+  submitted // Kỹ thuật nộp lên TP KT
+  tp_approved // TP KT duyệt
+  tp_returned // TP KT trả về (kèm lý do)
+  pricing_done // Sale Admin hoàn tất định giá
+  sent_to_client // Sale gửi KH
+  client_feedback // KH phản hồi
+  return_to_price // Sale gửi trả Sale Admin sửa giá
+  return_to_tech // Sale gửi trả Kỹ thuật sửa phương án
+  price_revised // Sale Admin sửa giá xong
+  tech_revised // Kỹ thuật sửa phương án xong
+  tp_reapproved // TP KT duyệt lại sau khi sửa KT
+  closed_won // Chốt thành công
+  closed_lost // Không chốt
   construction_started
   inspection_started
   project_completed
@@ -354,26 +354,52 @@ model SurveyReport {
   // Thay thế / bổ sung cho form_data: kỹ thuật có thể soạn báo cáo
   // trực tiếp trong Word (không bị giới hạn định dạng/ảnh như form)
   // rồi upload lên đây thay vì điền form online.
-  word_file_key         String?    // object key trong bucket R2
-  word_file_name        String?    // tên file gốc do người dùng upload
-  word_file_size        Int?       // bytes
+  word_file_key         String? // object key trong bucket R2
+  word_file_name        String? // tên file gốc do người dùng upload
+  word_file_size        Int? // bytes
   word_file_uploaded_by Int?
   word_file_uploaded_at DateTime?
 
   // ── Đồng bộ danh sách thiết bị với POM ─────────────────────
-  items_synced_at DateTime?  // Lần gần nhất danh sách thiết bị được snapshot/đồng bộ từ PomItem
-                              // So sánh với Pom.items_updated_at để phát hiện lệch dữ liệu
+  items_synced_at DateTime? // Lần gần nhất danh sách thiết bị được snapshot/đồng bộ từ PomItem
+  // So sánh với Pom.items_updated_at để phát hiện lệch dữ liệu
 
-  created_at       DateTime     @default(now())
-  updated_at       DateTime     @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  pom     Pom        @relation(fields: [pom_id], references: [id], onDelete: Restrict)
-  creator User       @relation(fields: [created_by], references: [id], onDelete: Restrict)
-  items   SurveyItem[]
+  pom       Pom                     @relation(fields: [pom_id], references: [id], onDelete: Restrict)
+  creator   User                    @relation(fields: [created_by], references: [id], onDelete: Restrict)
+  items     SurveyItem[]
+  documents SurveyDocumentVersion[]
 
   @@index([pom_id])
   @@index([status])
   @@map("survey_reports")
+}
+
+// Mỗi lần sinh Word từ mẫu chính thức tạo một phiên bản bất biến.
+// Nhờ vậy thay đổi BOM không âm thầm ghi đè tài liệu đã gửi/ký.
+model SurveyDocumentVersion {
+  id                       Int       @id @default(autoincrement())
+  report_id                Int
+  form_template_id         Int?
+  version                  Int
+  file_key                 String
+  file_name                String
+  file_size                Int
+  generated_from_pom_at    DateTime?
+  generated_from_survey_at DateTime?
+  template_version         Int?
+  is_final                 Boolean   @default(false)
+  created_by               Int?
+  created_at               DateTime  @default(now())
+
+  report       SurveyReport  @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  formTemplate FormTemplate? @relation(fields: [form_template_id], references: [id], onDelete: SetNull)
+
+  @@unique([report_id, version])
+  @@index([report_id, created_at])
+  @@map("survey_document_versions")
 }
 
 enum SurveyStatus {
@@ -385,22 +411,22 @@ enum SurveyStatus {
 // SURVEY ITEMS
 // ============================================================
 model SurveyItem {
-  id                Int      @id @default(autoincrement())
-  report_id         Int
-  pom_item_id       Int?     // NEW: tham chiếu thiết bị gốc trong POM (nguồn dữ liệu chính)
-                              // product_name / quantity_proposed / unit KHÔNG lưu ở đây nữa —
-                              // luôn đọc live qua pomItem.product / pomItem.quantity để không
-                              // bao giờ bị lệch với POM.
-  product_id        Int?     // Chỉ dùng cho thiết bị khảo sát thêm thủ công, KHÔNG có trong POM
-                              // (ví dụ phát sinh thực tế ngoài dự trù)
-  product_name      String?  // Chỉ dùng khi pom_item_id = null (thiết bị tự thêm, không có product_id)
-  quantity_actual   Int      @default(0)
-  unit              String   @default("Cái")
-  location          String?
-  condition_note    String?
+  id                  Int     @id @default(autoincrement())
+  report_id           Int
+  pom_item_id         Int? // NEW: tham chiếu thiết bị gốc trong POM (nguồn dữ liệu chính)
+  // product_name / quantity_proposed / unit KHÔNG lưu ở đây nữa —
+  // luôn đọc live qua pomItem.product / pomItem.quantity để không
+  // bao giờ bị lệch với POM.
+  product_id          Int? // Chỉ dùng cho thiết bị khảo sát thêm thủ công, KHÔNG có trong POM
+  // (ví dụ phát sinh thực tế ngoài dự trù)
+  product_name        String? // Chỉ dùng khi pom_item_id = null (thiết bị tự thêm, không có product_id)
+  quantity_actual     Int     @default(0)
+  unit                String  @default("Cái")
+  location            String?
+  condition_note      String?
   is_removed_from_pom Boolean @default(false) // NEW: thiết bị này đã bị xoá khỏi POM sau khi khảo sát
-                                                // (giữ lại lịch sử khảo sát thực tế, không xoá cứng)
-  sort_order        Int      @default(0)
+  // (giữ lại lịch sử khảo sát thực tế, không xoá cứng)
+  sort_order          Int     @default(0)
 
   report  SurveyReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
   pomItem PomItem?     @relation(fields: [pom_item_id], references: [id], onDelete: SetNull)
@@ -426,8 +452,18 @@ model FormTemplate {
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
-  solution Solution @relation(fields: [solution_id], references: [id], onDelete: Cascade)
-  creator  User?    @relation(fields: [created_by], references: [id], onDelete: SetNull)
+  // Mẫu Word gốc của loại khảo sát. App chỉ thay placeholder trong DOCX,
+  // không dựng lại bố cục bằng HTML nên giữ nguyên định dạng của đơn vị.
+  word_template_key         String?
+  word_template_name        String?
+  word_template_size        Int?
+  word_template_uploaded_by Int?
+  word_template_uploaded_at DateTime?
+  word_template_fields      Json?
+
+  solution         Solution                @relation(fields: [solution_id], references: [id], onDelete: Cascade)
+  creator          User?                   @relation(fields: [created_by], references: [id], onDelete: SetNull)
+  documentVersions SurveyDocumentVersion[]
 
   @@index([solution_id])
   @@map("form_templates")
@@ -439,17 +475,17 @@ model FormTemplate {
 // ============================================================
 model Notification {
   id         Int      @id @default(autoincrement())
-  user_id    Int                                    // Người nhận
-  pom_id     Int?                                   // BOM liên quan (nullable)
-  task_id    Int?                                   // Nhiệm vụ Planner liên quan (nullable)
-  type       String                                 // Loại: status_change | request_price | request_tech | approved | closed | task_comment
-  title      String                                 // Tiêu đề ngắn
-  message    String                                 // Nội dung chi tiết
+  user_id    Int // Người nhận
+  pom_id     Int? // BOM liên quan (nullable)
+  task_id    Int? // Nhiệm vụ Planner liên quan (nullable)
+  type       String // Loại: status_change | request_price | request_tech | approved | closed | task_comment
+  title      String // Tiêu đề ngắn
+  message    String // Nội dung chi tiết
   is_read    Boolean  @default(false)
   created_at DateTime @default(now())
 
-  user User  @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  pom  Pom?  @relation(fields: [pom_id],  references: [id], onDelete: SetNull)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  pom  Pom? @relation(fields: [pom_id], references: [id], onDelete: SetNull)
 
   @@index([user_id, is_read])
   @@index([pom_id])
@@ -493,21 +529,21 @@ model Attendance {
 // BUSINESS TRIPS — Báo cáo chi phí công tác (header)
 // ============================================================
 model BusinessTrip {
-  id              Int      @id @default(autoincrement())
-  user_id         Int
-  report_date     DateTime @db.Date
-  time_period     String?                  // "08/06-11/06/2026"
-  advance_amount  Decimal  @default(0)     // Tạm ứng
-  total_amount    Decimal  @default(0)     // Tổng chi phí
-  return_amount   Decimal  @default(0)     // Hoàn tạm ứng = Tạm ứng - Tổng chi
-  status          String   @default("pending") // pending | approved | rejected
-  note            String?
-  payment_method  String   @default("cash")    // cash | transfer
-  is_paid         Boolean  @default(false)      // đã chuyển khoản / chi trả xong
-  paid_at         DateTime?
-  paid_by         Int?
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  id             Int       @id @default(autoincrement())
+  user_id        Int
+  report_date    DateTime  @db.Date
+  time_period    String? // "08/06-11/06/2026"
+  advance_amount Decimal   @default(0) // Tạm ứng
+  total_amount   Decimal   @default(0) // Tổng chi phí
+  return_amount  Decimal   @default(0) // Hoàn tạm ứng = Tạm ứng - Tổng chi
+  status         String    @default("pending") // pending | approved | rejected
+  note           String?
+  payment_method String    @default("cash") // cash | transfer
+  is_paid        Boolean   @default(false) // đã chuyển khoản / chi trả xong
+  paid_at        DateTime?
+  paid_by        Int?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
 
   user  User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
   items BusinessTripItem[]
@@ -522,18 +558,18 @@ model BusinessTrip {
 // BUSINESS TRIP ITEMS — Chi tiết từng dòng chi phí
 // ============================================================
 model BusinessTripItem {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   trip_id     Int
   date        DateTime? @db.Date
-  ward        String?   // Xã/Phường/Sở
-  province    String?   // Tỉnh
-  content     String?   // Nội dung công tác
-  location    String?   // Địa điểm
-  description String?   // Diễn giải
-  note        String?   // Ghi chú
+  ward        String? // Xã/Phường/Sở
+  province    String? // Tỉnh
+  content     String? // Nội dung công tác
+  location    String? // Địa điểm
+  description String? // Diễn giải
+  note        String? // Ghi chú
   has_invoice Boolean   @default(false)
-  sale_person String?   // Kinh doanh
-  tech_person String?   // Kỹ thuật
+  sale_person String? // Kinh doanh
+  tech_person String? // Kỹ thuật
   unit        String    @default("Ngày")
   quantity    Decimal   @default(1)
   unit_price  Decimal   @default(0)
@@ -546,7 +582,6 @@ model BusinessTripItem {
   @@map("business_trip_items")
 }
 
-
 // ============================================================
 // SCHEDULE EVENTS — Module Lịch tuần
 // Thay thế bảng trắng thủ công của công ty
@@ -556,8 +591,8 @@ model ScheduleEvent {
   title       String   @db.VarChar(300)
   description String?
   date        DateTime @db.Date
-  start_time  String?  @db.VarChar(5)   // "HH:MM"
-  end_time    String?  @db.VarChar(5)   // "HH:MM"
+  start_time  String?  @db.VarChar(5) // "HH:MM"
+  end_time    String?  @db.VarChar(5) // "HH:MM"
   category    String   @default("other") // meeting | trip | task | deadline | other
   priority    String   @default("medium") // high | medium | low
   location    String?  @db.VarChar(300)
@@ -565,7 +600,7 @@ model ScheduleEvent {
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
-  creator       User                 @relation("ScheduleEventCreator", fields: [created_by], references: [id], onDelete: Restrict)
+  creator       User                @relation("ScheduleEventCreator", fields: [created_by], references: [id], onDelete: Restrict)
   assignedUsers ScheduleEventUser[]
 
   @@index([date])

@@ -735,7 +735,7 @@ export const saveReceipt = asyncHandler(async (req: Request, res: Response) => {
       if (cur.status !== 'draft') throw new AppError(400, 'Phiếu đã ghi sổ — không thể sửa. Hãy huỷ phiếu rồi tạo phiếu mới.')
       code = cur.code
       await tx.$executeRawUnsafe(
-        `UPDATE public.wh_receipts SET warehouse_id=$2, supplier_id=$3, receipt_date=$4,
+        `UPDATE public.wh_receipts SET warehouse_id=$2, supplier_id=$3, receipt_date=$4::date,
            reference_no=$5, note=$6, total_amount=$7, receipt_type=$8, pom_id=$9, po_id=$10 WHERE id=$1`,
         docId, whId, int(supplier_id), str(receipt_date) ?? new Date().toISOString().slice(0, 10),
         str(reference_no), str(note), total, rType, int(pom_id), int(po_id))
@@ -746,7 +746,7 @@ export const saveReceipt = asyncHandler(async (req: Request, res: Response) => {
         `INSERT INTO public.wh_receipts
            (code, warehouse_id, supplier_id, receipt_date, reference_no, note, total_amount,
             receipt_type, pom_id, po_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+         VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
         code, whId, int(supplier_id), str(receipt_date) ?? new Date().toISOString().slice(0, 10),
         str(reference_no), str(note), total, rType, int(pom_id), int(po_id), uid)
       docId = row.id
@@ -931,7 +931,7 @@ export const saveIssue = asyncHandler(async (req: Request, res: Response) => {
       code = cur.code
       await tx.$executeRawUnsafe(
         `UPDATE public.wh_issues SET warehouse_id=$2, issue_type=$3, pom_id=$4, customer_name=$5,
-           receiver=$6, issue_date=$7, note=$8, total_amount=$9 WHERE id=$1`,
+           receiver=$6, issue_date=$7::date, note=$8, total_amount=$9 WHERE id=$1`,
         docId, whId, str(issue_type) ?? 'sale', int(pom_id), str(customer_name), str(receiver),
         str(issue_date) ?? new Date().toISOString().slice(0, 10), str(note), total)
       await tx.$executeRawUnsafe(`DELETE FROM public.wh_issue_items WHERE issue_id = $1`, docId)
@@ -940,7 +940,7 @@ export const saveIssue = asyncHandler(async (req: Request, res: Response) => {
       const [row] = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_issues
            (code, warehouse_id, issue_type, pom_id, customer_name, receiver, issue_date, note, total_amount, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10) RETURNING id`,
         code, whId, str(issue_type) ?? 'sale', int(pom_id), str(customer_name), str(receiver),
         str(issue_date) ?? new Date().toISOString().slice(0, 10), str(note), total, uid)
       docId = row.id
@@ -1161,14 +1161,14 @@ export const saveTransfer = asyncHandler(async (req: Request, res: Response) => 
       code = cur.code
       await tx.$executeRawUnsafe(
         `UPDATE public.wh_transfers SET from_warehouse_id=$2, to_warehouse_id=$3,
-           transfer_date=$4, note=$5, pom_id=$6 WHERE id=$1`,
+           transfer_date=$4::date, note=$5, pom_id=$6 WHERE id=$1`,
         docId, fromId, toId, str(transfer_date) ?? new Date().toISOString().slice(0, 10), str(note), int(pom_id))
       await tx.$executeRawUnsafe(`DELETE FROM public.wh_transfer_items WHERE transfer_id = $1`, docId)
     } else {
       code = await nextCode(tx, 'wh_transfers', 'DC')
       const [row] = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_transfers (code, from_warehouse_id, to_warehouse_id, transfer_date, note, pom_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+         VALUES ($1,$2,$3,$4::date,$5,$6,$7) RETURNING id`,
         code, fromId, toId, str(transfer_date) ?? new Date().toISOString().slice(0, 10), str(note), int(pom_id), uid)
       docId = row.id
     }
@@ -1374,14 +1374,14 @@ export const saveCount = asyncHandler(async (req: Request, res: Response) => {
       if (cur.status !== 'draft') throw new AppError(400, 'Phiếu kiểm kê đã ghi sổ — không thể sửa')
       code = cur.code
       await tx.$executeRawUnsafe(
-        `UPDATE public.wh_counts SET warehouse_id=$2, count_date=$3, note=$4 WHERE id=$1`,
+        `UPDATE public.wh_counts SET warehouse_id=$2, count_date=$3::date, note=$4 WHERE id=$1`,
         docId, whId, str(count_date) ?? new Date().toISOString().slice(0, 10), str(note))
       await tx.$executeRawUnsafe(`DELETE FROM public.wh_count_items WHERE count_id = $1`, docId)
     } else {
       code = await nextCode(tx, 'wh_counts', 'KK')
       const [row] = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_counts (code, warehouse_id, count_date, note, created_by)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+         VALUES ($1,$2,$3::date,$4,$5) RETURNING id`,
         code, whId, str(count_date) ?? new Date().toISOString().slice(0, 10), str(note), uid)
       docId = row.id
     }

@@ -748,31 +748,53 @@ export const upsertPomItems = asyncHandler(async (req: Request, res: Response) =
   const { items } = req.body
   if (!Array.isArray(items)) throw new AppError(400, 'items must be an array')
 
-  const result = await prisma.$transaction([
-    prisma.pomItem.deleteMany({ where: { pom_id: pomId } }),
-    prisma.pomItem.createMany({
-      data: items.map((item: any, idx: number) => ({
-        pom_id: pomId,
-        product_id: item.product_id ?? null,
-        quantity: Number(item.quantity) || 1,
-        unit_price: Number(item.unit_price) || 0,
-        sale_price: item.sale_price != null ? Number(item.sale_price) : null,
-        vat_rate: Number(item.vat_rate) ?? 0.1,
-        note: item.note ?? null,
-        sort_order: item.sort_order ?? idx,
-      })),
-    }),
-    // Đánh dấu thời điểm danh sách thiết bị thay đổi — phiếu khảo sát
-    // liên kết sẽ dùng mốc này để phát hiện lệch dữ liệu và nhắc đồng bộ.
-    prisma.pom.update({ where: { id: pomId }, data: { items_updated_at: new Date() } }),
-  ])
+  // Không xoá toàn bộ rồi tạo lại: SurveyItem đang tham chiếu PomItem.id.
+  // Giữ ID ổn định giúp thay số lượng trong BOM phản ánh trực tiếp sang báo cáo
+  // và tránh biến một thay đổi số lượng thành thao tác "gỡ + thêm" giả.
+  const result = await prisma.$transaction(async tx => {
+    const existing = await tx.pomItem.findMany({ where: { pom_id: pomId } })
+    const existingById = new Map(existing.map(item => [item.id, item]))
+    const unclaimedByProduct = new Map<number, typeof existing[number]>()
+    existing.forEach(item => unclaimedByProduct.set(item.product_id, item))
+    const retainedIds = new Set<number>()
+
+    for (let idx = 0; idx < items.length; idx += 1) {
+      const input = items[idx]
+      const requestedId = Number(input.id)
+      const productId = Number(input.product_id)
+      const matched = (requestedId && existingById.get(requestedId)) || unclaimedByProduct.get(productId)
+      const data = {
+        product_id: productId,
+        quantity: Math.max(1, Number(input.quantity) || 1),
+        unit_price: Number(input.unit_price) || 0,
+        sale_price: input.sale_price != null ? Number(input.sale_price) : null,
+        vat_rate: input.vat_rate != null ? Number(input.vat_rate) : 0.1,
+        note: input.note ?? null,
+        sort_order: input.sort_order ?? idx,
+      }
+
+      if (matched) {
+        await tx.pomItem.update({ where: { id: matched.id }, data })
+        retainedIds.add(matched.id)
+        unclaimedByProduct.delete(matched.product_id)
+      } else {
+        const created = await tx.pomItem.create({ data: { pom_id: pomId, ...data } })
+        retainedIds.add(created.id)
+      }
+    }
+
+    const removedIds = existing.filter(item => !retainedIds.has(item.id)).map(item => item.id)
+    if (removedIds.length) await tx.pomItem.deleteMany({ where: { id: { in: removedIds } } })
+    await tx.pom.update({ where: { id: pomId }, data: { items_updated_at: new Date() } })
+    return { count: items.length }
+  })
 
   const pom = await prisma.pom.findUnique({
     where: { id: pomId },
     include: POM_FULL_INCLUDE,
   })
 
-  res.json(successResponse(pom, `Đã cập nhật ${result[1].count} items`))
+  res.json(successResponse(pom, `Đã cập nhật ${result.count} items`))
 })
 
 export const addPomItem = asyncHandler(async (req: Request, res: Response) => {

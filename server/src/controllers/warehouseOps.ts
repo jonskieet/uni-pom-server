@@ -231,7 +231,7 @@ export const createReservations = asyncHandler(async (req: Request, res: Respons
       const [row] = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_reservations
            (pom_id, project_name, warehouse_id, item_id, quantity, expire_date, note, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8) RETURNING id`,
         pomId, str(project_name), whId, itemId, qty, str(expire_date), str(note), uid)
       out.push(row)
     }
@@ -305,7 +305,7 @@ export const getPurchaseSuggestions = asyncHandler(async (req: Request, res: Res
          GROUP BY pr.id
       ) d ON TRUE
       JOIN public.wh_item_availability av ON av.product_id = d.product_id
-     WHERE ${pomId ? Prisma.sql`p.id = ${pomId}` : Prisma.sql`p.status NOT IN ('draft','lost')`}
+     WHERE ${pomId ? Prisma.sql`p.id = ${pomId}` : Prisma.sql`p.status NOT IN ('draft','closed_lost')`}
        AND d.need > av.available + av.incoming
      ORDER BY (d.need - av.available - av.incoming) DESC
      LIMIT 300
@@ -318,7 +318,7 @@ export const getPurchaseSuggestions = asyncHandler(async (req: Request, res: Res
       JOIN public.products pr ON pr.id = pi.product_id
       JOIN public.poms p      ON p.id = pi.pom_id
      WHERE NOT EXISTS (SELECT 1 FROM public.wh_items wi WHERE wi.product_id = pr.id)
-       AND ${pomId ? Prisma.sql`p.id = ${pomId}` : Prisma.sql`p.status NOT IN ('draft','lost')`}
+       AND ${pomId ? Prisma.sql`p.id = ${pomId}` : Prisma.sql`p.status NOT IN ('draft','closed_lost')`}
      LIMIT 200
   `
 
@@ -414,7 +414,7 @@ export const saveRequest = asyncHandler(async (req: Request, res: Response) => {
       code = cur.code
       await tx.$executeRawUnsafe(
         `UPDATE public.wh_requests SET warehouse_id=$2, to_warehouse_id=$3, pom_id=$4,
-           project_name=$5, need_date=$6, purpose=$7, note=$8, status='draft', reject_reason=NULL
+           project_name=$5, need_date=$6::date, purpose=$7, note=$8, status='draft', reject_reason=NULL
          WHERE id=$1`,
         docId, whId, int(to_warehouse_id), int(pom_id), str(project_name),
         str(need_date), p, str(note))
@@ -425,7 +425,7 @@ export const saveRequest = asyncHandler(async (req: Request, res: Response) => {
         `INSERT INTO public.wh_requests
            (code, warehouse_id, to_warehouse_id, pom_id, project_name, need_date,
             purpose, note, requester_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$9) RETURNING id`,
         code, whId, int(to_warehouse_id), int(pom_id), str(project_name),
         str(need_date), p, str(note), uid)
       docId = row.id
@@ -537,7 +537,7 @@ export const fulfilRequest = asyncHandler(async (req: Request, res: Response) =>
       const [row] = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_transfers
            (code, from_warehouse_id, to_warehouse_id, transfer_date, note, pom_id, request_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+         VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8) RETURNING id`,
         code, doc.warehouse_id, doc.to_warehouse_id, todayStr(),
         `Theo phiếu đề nghị ${doc.code}`, doc.pom_id, id, uid)
 
@@ -559,7 +559,7 @@ export const fulfilRequest = asyncHandler(async (req: Request, res: Response) =>
       `INSERT INTO public.wh_issues
          (code, warehouse_id, issue_type, pom_id, customer_name, receiver, issue_date,
           note, total_amount, request_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10,$11) RETURNING id`,
       code, doc.warehouse_id,
       doc.purpose === 'internal' ? 'internal' : doc.purpose === 'warranty' ? 'other' : 'project',
       doc.pom_id, doc.project_name, null, todayStr(),
@@ -668,7 +668,7 @@ export const createSerials = asyncHandler(async (req: Request, res: Response) =>
       const rows = await tx.$queryRawUnsafe<any[]>(
         `INSERT INTO public.wh_serials
            (item_id, serial, mac, warehouse_id, supplier_id, receipt_id, warranty_end, note)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8)
          ON CONFLICT (item_id, serial) DO NOTHING
          RETURNING id, serial`,
         itemId, s.serial, s.mac, int(warehouse_id), int(supplier_id),
@@ -694,7 +694,7 @@ export const updateSerial = asyncHandler(async (req: Request, res: Response) => 
     `UPDATE public.wh_serials SET
        serial = COALESCE($2, serial), mac = $3,
        status = COALESCE($4, status),
-       warehouse_id = $5, pom_id = $6, warranty_end = $7, note = $8
+       warehouse_id = $5, pom_id = $6, warranty_end = $7::date, note = $8
      WHERE id = $1 RETURNING *`,
     id, str(serial), str(mac), st, int(warehouse_id), int(pom_id),
     str(warranty_end), str(note))
@@ -786,7 +786,7 @@ export const savePurchaseOrder = asyncHandler(async (req: Request, res: Response
       code = cur.code
       await tx.$executeRawUnsafe(
         `UPDATE public.wh_purchase_orders SET supplier_id=$2, warehouse_id=$3, pom_id=$4,
-           order_date=$5, expected_date=$6, reference_no=$7, note=$8, total_amount=$9
+           order_date=$5::date, expected_date=$6::date, reference_no=$7, note=$8, total_amount=$9
          WHERE id=$1`,
         docId, int(supplier_id), whId, int(pom_id),
         str(order_date) ?? todayStr(), str(expected_date), str(reference_no), str(note), total)
@@ -797,7 +797,7 @@ export const savePurchaseOrder = asyncHandler(async (req: Request, res: Response
         `INSERT INTO public.wh_purchase_orders
            (code, supplier_id, warehouse_id, pom_id, order_date, expected_date,
             reference_no, note, total_amount, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5::date,$6::date,$7,$8,$9,$10) RETURNING id`,
         code, int(supplier_id), whId, int(pom_id),
         str(order_date) ?? todayStr(), str(expected_date), str(reference_no), str(note), total, uid)
       docId = row.id
@@ -876,7 +876,7 @@ export const receivePurchaseOrder = asyncHandler(async (req: Request, res: Respo
       `INSERT INTO public.wh_receipts
          (code, warehouse_id, supplier_id, receipt_date, reference_no, note,
           total_amount, receipt_type, pom_id, po_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'purchase',$8,$9,$10) RETURNING id`,
+       VALUES ($1,$2,$3,$4::date,$5,$6,$7,'purchase',$8,$9,$10) RETURNING id`,
       code, po.warehouse_id, po.supplier_id, todayStr(), po.reference_no,
       `Nhận hàng theo đơn mua ${po.code}`, total, po.pom_id, id, uid)
 
@@ -908,7 +908,7 @@ export const createPOFromSuggestions = asyncHandler(async (req: Request, res: Re
     const [row] = await tx.$queryRawUnsafe<any[]>(
       `INSERT INTO public.wh_purchase_orders
          (code, supplier_id, warehouse_id, pom_id, order_date, expected_date, note, total_amount, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+       VALUES ($1,$2,$3,$4,$5::date,$6::date,$7,$8,$9) RETURNING id`,
       code, int(supplier_id), whId, int(pom_id), todayStr(),
       str(expected_date), str(note) ?? 'Tạo từ đề xuất mua hàng', total, uid)
 

@@ -32,29 +32,41 @@ const SURVEY_ITEMS_INCLUDE = {
   },
 }
 
+const SURVEY_DOCUMENTS_INCLUDE = {
+  documents: { orderBy: { version: 'desc' as const }, take: 1 },
+}
+
 /**
  * GET /surveys — Get all survey reports
  */
 export const getSurveys = asyncHandler(async (req: Request, res: Response) => {
   const page = Math.max(1, parseInt(req.query.page as string) || 1)
-  const limit = Math.min(100, parseInt(req.query.limit as string) || 20)
+  const limit = Math.min(100, parseInt(req.query.limit as string) || 100)
   const skip = (page - 1) * limit
   const statusParam = req.query.status as string | undefined
   const status = (statusParam && Object.values(SurveyStatus).includes(statusParam as SurveyStatus))
     ? (statusParam as SurveyStatus)
     : undefined
   const pomId = req.query.pom_id ? parseInt(req.query.pom_id as string) : undefined
+  const reportType = req.query.report_type ? String(req.query.report_type) : undefined
+  const search = req.query.search ? String(req.query.search).trim() : undefined
 
   const where = {
     ...(status && { status }),
     ...(pomId   && { pom_id: pomId }),
+    ...(reportType && { report_type: reportType }),
+    ...(search && { OR: [
+      { report_code: { contains: search, mode: 'insensitive' as const } },
+      { project_name: { contains: search, mode: 'insensitive' as const } },
+      { customer_name: { contains: search, mode: 'insensitive' as const } },
+    ] }),
   }
 
   // Khi filter theo pom_id: trả về array thẳng (không cần pagination)
   if (pomId) {
     const surveys = await prisma.surveyReport.findMany({
       where,
-      include: { pom: true, creator: true, ...SURVEY_ITEMS_INCLUDE },
+      include: { pom: true, creator: true, ...SURVEY_ITEMS_INCLUDE, ...SURVEY_DOCUMENTS_INCLUDE },
       orderBy: { created_at: 'desc' }
     })
     return res.json(successResponse(surveys))
@@ -63,7 +75,7 @@ export const getSurveys = asyncHandler(async (req: Request, res: Response) => {
   const [surveys, total] = await Promise.all([
     prisma.surveyReport.findMany({
       where,
-      include: { pom: true, creator: true, ...SURVEY_ITEMS_INCLUDE },
+      include: { pom: true, creator: true, ...SURVEY_ITEMS_INCLUDE, ...SURVEY_DOCUMENTS_INCLUDE },
       skip,
       take: limit,
       orderBy: { created_at: 'desc' }
@@ -90,7 +102,7 @@ export const getSurveys = asyncHandler(async (req: Request, res: Response) => {
 export const getSurveyById = asyncHandler(async (req: Request, res: Response) => {
   const survey = await prisma.surveyReport.findUniqueOrThrow({
     where: { id: parseInt(req.params.id) },
-    include: { pom: true, creator: true, ...SURVEY_ITEMS_INCLUDE }
+    include: { pom: true, creator: true, ...SURVEY_ITEMS_INCLUDE, documents: { orderBy: { version: 'desc' } } }
   })
 
   // BUG FIX: Include form template schema để frontend có thể map field key → label.
@@ -99,7 +111,11 @@ export const getSurveyById = asyncHandler(async (req: Request, res: Response) =>
   if (survey.form_template_id) {
     formTemplate = await prisma.formTemplate.findUnique({
       where: { id: survey.form_template_id },
-      select: { id: true, name: true, schema: true },
+      select: {
+        id: true, name: true, schema: true, version: true,
+        word_template_name: true, word_template_size: true,
+        word_template_uploaded_at: true, word_template_fields: true,
+      },
     })
   }
 
@@ -250,10 +266,26 @@ export const getSurveySyncDiff = asyncHandler(async (req: Request, res: Response
       product_id: i.product_id,
     }))
 
+  const quantities = activeItems
+    .filter(i => i.product_id != null && pomProductIds.has(i.product_id))
+    .map(i => {
+      const pomItem = pomItems.find(pi => pi.product_id === i.product_id)
+      return {
+        survey_item_id: i.id,
+        product_id: i.product_id,
+        product_name: pomItem?.product.name ?? '',
+        quantity: pomItem?.quantity ?? 0,
+      }
+    })
+  const timestampsDiffer = !!survey.pom.items_updated_at && (
+    !survey.items_synced_at || survey.pom.items_updated_at > survey.items_synced_at
+  )
+
   res.json(successResponse({
-    has_changes: added.length > 0 || removed.length > 0,
+    has_changes: timestampsDiffer || added.length > 0 || removed.length > 0,
     added,
     removed,
+    quantities,
     pom_items_updated_at: survey.pom.items_updated_at,
     items_synced_at: survey.items_synced_at,
   }))

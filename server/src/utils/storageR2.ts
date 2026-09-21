@@ -69,6 +69,15 @@ export function buildWordFileKey(reportCode: string, originalName: string): stri
   return `survey-word-files/${reportCode}/${Date.now()}-${safeName}`
 }
 
+export function buildWordTemplateKey(templateId: number, originalName: string): string {
+  const safeName = originalName.replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, '_').slice(-150)
+  return `survey-word-templates/${templateId}/${Date.now()}-${safeName}`
+}
+
+export function buildGeneratedSurveyKey(reportCode: string, version: number): string {
+  return `survey-generated-documents/${reportCode}/v${version}-${Date.now()}.docx`
+}
+
 /**
  * Upload buffer file Word lên Cloudflare R2.
  */
